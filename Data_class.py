@@ -3,6 +3,7 @@ import pandas as pd
 import logging
 from datetime import datetime
 import time
+from typing import List, Dict
 
 # Configure logging
 logging.basicConfig(
@@ -15,13 +16,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Global cache for schema list
-@st.cache_data(ttl=3600, experimental_allow_widgets=True)
-def get_schema_list(conn) -> list:
-    """
-    Fetches and caches list of schemas for all users
-    Query runs once per hour globally
-    """
+@st.cache_data(ttl=3600)
+def get_schema_list() -> List[str]:
+    """Fetches list of schemas - cached globally for 1 hour"""
     logger.info("Fetching schema list")
     try:
         query = """
@@ -30,21 +27,17 @@ def get_schema_list(conn) -> list:
         WHERE SCHEMA_NAME NOT LIKE 'INFORMATION_SCHEMA%'
         ORDER BY SCHEMA_NAME
         """
-        df = pd.read_sql(query, conn)
+        df = get_data_sf(query)
         schemas = df['name'].tolist()
-        logger.info(f"Cached {len(schemas)} schemas for global use")
+        logger.info(f"Cached {len(schemas)} schemas globally")
         return schemas
     except Exception as e:
         logger.error(f"Error fetching schemas: {str(e)}")
         raise
 
-# Global cache for object types in a schema
-@st.cache_data(ttl=3600, experimental_allow_widgets=True)
-def get_schema_objects(conn, schema: str) -> dict:
-    """
-    Fetches and caches tables and views for given schema for all users
-    Query runs once per hour per schema globally
-    """
+@st.cache_data(ttl=3600)
+def get_schema_objects(schema: str) -> Dict[str, List[str]]:
+    """Fetches objects for a schema - cached globally for 1 hour"""
     logger.info(f"Fetching objects for schema: {schema}")
     try:
         # Get tables
@@ -55,7 +48,7 @@ def get_schema_objects(conn, schema: str) -> dict:
         AND TABLE_TYPE = 'BASE TABLE'
         ORDER BY TABLE_NAME
         """
-        tables_df = pd.read_sql(tables_query, conn)
+        tables_df = get_data_sf(tables_query)
         
         # Get views
         views_query = f"""
@@ -64,38 +57,53 @@ def get_schema_objects(conn, schema: str) -> dict:
         WHERE TABLE_SCHEMA = '{schema}'
         ORDER BY TABLE_NAME
         """
-        views_df = pd.read_sql(views_query, conn)
+        views_df = get_data_sf(views_query)
         
         result = {
             "tables": tables_df['name'].tolist(),
             "views": views_df['name'].tolist()
         }
-        logger.info(f"Cached {len(result['tables'])} tables and {len(result['views'])} views for {schema}")
+        logger.info(f"Cached objects for {schema}: {len(result['tables'])} tables, {len(result['views'])} views")
         return result
     except Exception as e:
         logger.error(f"Error fetching objects for {schema}: {str(e)}")
         raise
 
-def get_ddl(conn, schema: str, object_name: str, object_type: str) -> str:
-    """
-    Fetches DDL for specific object - not cached as it might change frequently
-    """
+def get_ddl(schema: str, object_name: str, object_type: str) -> str:
+    """Fetches DDL for specific object - not cached as it might change"""
     logger.info(f"Fetching DDL for {object_type} {schema}.{object_name}")
     try:
         query = f"SELECT GET_DDL('{object_type}', '{schema}.{object_name}')"
-        df = pd.read_sql(query, conn)
-        ddl = df.iloc[0, 0]
-        return ddl
+        df = get_data_sf(query)
+        return df.iloc[0, 0]
     except Exception as e:
         logger.error(f"Error fetching DDL: {str(e)}")
         raise
 
-def create_ui(conn):
+def main():
+    # Page config
     st.set_page_config(
         page_title="DDL Analyzer",
         page_icon="🔍",
         layout="wide"
     )
+
+    # Custom CSS
+    st.markdown("""
+        <style>
+        .block-container {
+            padding-top: 2rem;
+            padding-bottom: 2rem;
+        }
+        .stButton button {
+            width: 100%;
+            margin-top: 1rem;
+        }
+        .stProgress > div > div > div > div {
+            background-color: #1f77b4;
+        }
+        </style>
+    """, unsafe_allow_html=True)
 
     st.title("🔍 DDL Analyzer")
     st.markdown("Analyze your database objects structure and get intelligent insights.")
@@ -104,30 +112,29 @@ def create_ui(conn):
     with st.sidebar:
         st.header("Object Selection")
         
-        # 1. Schema Selection
         try:
-            available_schemas = get_schema_list(conn)
+            # 1. Schema Selection
+            available_schemas = get_schema_list()
+            if not available_schemas:
+                st.error("No schemas available")
+                return
+                
             selected_schema = st.selectbox(
                 "1. Select Schema",
                 options=available_schemas,
                 help="Choose a schema to explore"
             )
-        except Exception as e:
-            st.error("Error loading schemas. Please check connection.")
-            logger.error(f"Schema loading error: {str(e)}")
-            return
 
-        # 2. Object Type Selection
-        if selected_schema:
-            object_type = st.radio(
-                "2. Select Object Type",
-                options=["TABLE", "VIEW"],
-                help="Choose the type of object to analyze"
-            )
+            if selected_schema:
+                # 2. Object Type Selection
+                object_type = st.radio(
+                    "2. Select Object Type",
+                    options=["TABLE", "VIEW"],
+                    help="Choose the type of object to analyze"
+                )
 
-            # 3. Object Selection
-            try:
-                schema_objects = get_schema_objects(conn, selected_schema)
+                # 3. Object Selection
+                schema_objects = get_schema_objects(selected_schema)
                 object_list = schema_objects["tables"] if object_type == "TABLE" else schema_objects["views"]
                 
                 if not object_list:
@@ -139,16 +146,17 @@ def create_ui(conn):
                         options=object_list,
                         help=f"Choose a {object_type.lower()} to analyze"
                     )
-            except Exception as e:
-                st.error(f"Error loading {object_type.lower()}s")
-                logger.error(f"Object loading error: {str(e)}")
-                return
+
+        except Exception as e:
+            st.error("Error loading options. Please check your connection.")
+            logger.error(f"Error in selection options: {str(e)}")
+            return
 
     # Main content area
-    if selected_schema and selected_object:
+    if 'selected_schema' in locals() and 'selected_object' in locals() and selected_object:
         try:
             # Get DDL
-            ddl = get_ddl(conn, selected_schema, selected_object, object_type)
+            ddl = get_ddl(selected_schema, selected_object, object_type)
             
             # Display DDL
             st.subheader("📝 DDL Statement")
@@ -158,13 +166,13 @@ def create_ui(conn):
             # Analyze button
             if st.button("🔍 Analyze Structure"):
                 with st.spinner("Analyzing structure..."):
-                    # Progress bar for visual feedback
+                    # Progress bar
                     progress_bar = st.progress(0)
                     for i in range(100):
                         time.sleep(0.01)
                         progress_bar.progress(i + 1)
                     
-                    # Generate prompt
+                    # Generate prompt for LLM
                     prompt = f"""Analyze this DDL statement and provide a detailed classification of each column:
 
 {ddl}
@@ -176,7 +184,7 @@ For each column, provide:
 
 Format as JSON: {{"column_name": {{"classification": "category", "explanation": "brief explanation", "data_quality_checks": ["check1", "check2"]}}}}"""
 
-                    # Get LLM response
+                    # Get LLM analysis
                     analysis = eval(get_llm_response(prompt))
                     
                     # Display results
@@ -214,9 +222,8 @@ Format as JSON: {{"column_name": {{"classification": "category", "explanation": 
                     )
 
         except Exception as e:
-            st.error(f"Analysis error: {str(e)}")
+            st.error("Error analyzing DDL. Please try again.")
             logger.error(f"Analysis error: {str(e)}")
 
 if __name__ == "__main__":
-    # Assuming conn is passed from your existing connection
-    create_ui(conn)
+    main()
