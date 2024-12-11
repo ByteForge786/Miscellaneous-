@@ -1,3 +1,46 @@
+WITH table_columns AS (
+    SELECT 
+        table_schema,
+        table_name,
+        'TABLE' as object_type,
+        column_name,
+        data_type,
+        is_nullable,
+        NULL as base_schema,
+        NULL as base_table,
+        NULL as base_column
+    FROM information_schema.columns
+    WHERE table_type = 'BASE TABLE'
+    AND table_schema NOT IN ('INFORMATION_SCHEMA', 'PUBLIC')
+),
+view_columns AS (
+    SELECT 
+        v.table_schema,
+        v.table_name,
+        'VIEW' as object_type,
+        v.column_name,
+        v.data_type,
+        v.is_nullable,
+        r.referenced_schema_name as base_schema,
+        r.referenced_table_name as base_table,
+        r.referenced_column_name as base_column
+    FROM information_schema.columns v
+    LEFT JOIN information_schema.referenced_columns r 
+        ON v.table_schema = r.referencing_schema_name
+        AND v.table_name = r.referencing_table_name 
+        AND v.column_name = r.referencing_column_name
+    WHERE v.table_type = 'VIEW'
+    AND v.table_schema NOT IN ('INFORMATION_SCHEMA', 'PUBLIC')
+)
+SELECT * FROM table_columns
+UNION ALL
+SELECT * FROM view_columns
+ORDER BY table_schema, table_name, column_name;
+
+
+
+
+
 WITH base_objects AS (
     -- Get Tables and their columns
     SELECT 
