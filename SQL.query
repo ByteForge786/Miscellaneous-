@@ -1,0 +1,34 @@
+WITH base_objects AS (
+    -- Get Tables and their columns
+    SELECT 
+        table_schema as schema_name,
+        table_name as object_name,
+        'TABLE' as object_type,
+        column_name,
+        NULL as derived_from_table,
+        NULL as derived_from_column
+    FROM information_schema.columns 
+    WHERE table_type = 'BASE TABLE'
+    AND table_schema NOT IN ('INFORMATION_SCHEMA', 'PUBLIC')
+    
+    UNION ALL
+    
+    -- Get Views and their column lineage
+    SELECT 
+        v.table_schema as schema_name,
+        v.table_name as object_name,
+        'VIEW' as object_type,
+        v.column_name,
+        r.referenced_table_name as derived_from_table,
+        r.referenced_column_name as derived_from_column
+    FROM information_schema.columns v
+    LEFT JOIN information_schema.referenced_columns r 
+        ON v.table_schema = r.referencing_schema_name
+        AND v.table_name = r.referencing_table_name 
+        AND v.column_name = r.referencing_column_name
+    WHERE v.table_type = 'VIEW'
+    AND v.table_schema NOT IN ('INFORMATION_SCHEMA', 'PUBLIC')
+)
+SELECT *
+FROM base_objects
+ORDER BY schema_name, object_type, object_name, column_name;
