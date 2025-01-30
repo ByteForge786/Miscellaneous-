@@ -84,11 +84,17 @@ def get_ddl_and_samples(schema: str, object_name: str, object_type: str) -> Tupl
         
     # Then try to get samples - this is optional
     try:
-        # Get sample values
+        # Get sample values with row numbers for each column
         sample_query = f"""
-        SELECT *
-        FROM {schema}.{object_name}
-        LIMIT 5
+        WITH column_data AS (
+            SELECT *,
+                   ROW_NUMBER() OVER (PARTITION BY 
+                       {', '.join(f'CASE WHEN {col} IS NOT NULL THEN {col} END' for col in ddl_df.columns)}
+                   ) as rn
+            FROM {schema}.{object_name}
+            WHERE {' OR '.join(f'{col} IS NOT NULL' for col in ddl_df.columns)}
+        )
+        SELECT * FROM column_data WHERE rn <= 5
         """
         samples_df = get_data_sf(sample_query)
         
@@ -98,22 +104,26 @@ def get_ddl_and_samples(schema: str, object_name: str, object_type: str) -> Tupl
         processed_ddl = []
         current_line_index = 0
         
-        # Process each line of DDL
+        for column in samples_df.columns:
+            if column != 'rn':  # Skip row number column
+                values = samples_df[samples_df[column].notnull()][column].astype(str).unique().tolist()
+                if values and not all(v.lower() in ['nan', 'none', 'null', ''] for v in values):
+                    samples_dict[column] = values[:5]  # Ensure we take max 5 unique values
+        
+        # Process DDL with samples
         while current_line_index < len(ddl_lines):
             line = ddl_lines[current_line_index]
             processed_ddl.append(line)
             
             # Check if this line contains a column definition
-            for column in samples_df.columns:
+            for column in samples_dict:
                 if column in line and (',' in line or ')' in line):  # Column definition line
-                    values = samples_df[column].astype(str).tolist()
+                    values = samples_dict[column]
                     # If any value > 50 chars, keep only one sample
                     if any(len(str(v)) > 50 for v in values):
-                        samples_dict[column] = [values[0]]
                         sample_str = f"    -- Dummy Sample: {values[0]}"
                     else:
-                        samples_dict[column] = values[:5]
-                        sample_str = f"    -- Dummy Samples: {', '.join(str(v) for v in values[:5])}"
+                        sample_str = f"    -- Dummy Samples: {', '.join(str(v) for v in values)}"
                     processed_ddl.append(sample_str)
                     break
                     
