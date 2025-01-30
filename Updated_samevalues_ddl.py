@@ -174,16 +174,36 @@ def main():
             selected_schema = st.selectbox(
                 "1. Select Schema",
                 options=available_schemas,
-                help="Choose a schema to explore"
+                help="Choose a schema to explore",
+                key="schema_selector"
             )
+            
+            # Reset analysis state when schema changes
+            if 'previous_schema' not in st.session_state:
+                st.session_state.previous_schema = selected_schema
+            elif st.session_state.previous_schema != selected_schema:
+                st.session_state.analysis_complete = False
+                if 'df' in st.session_state:
+                    del st.session_state.df
+                st.session_state.previous_schema = selected_schema
 
             if selected_schema:
                 # 2. Object Type Selection
                 object_type = st.radio(
                     "2. Select Object Type",
                     options=["TABLE", "VIEW"],
-                    help="Choose the type of object to analyze"
+                    help="Choose the type of object to analyze",
+                    key="object_type"
                 )
+                
+                # Reset analysis state when object type changes
+                if 'previous_type' not in st.session_state:
+                    st.session_state.previous_type = object_type
+                elif st.session_state.previous_type != object_type:
+                    st.session_state.analysis_complete = False
+                    if 'df' in st.session_state:
+                        del st.session_state.df
+                    st.session_state.previous_type = object_type
 
                 # 3. Object Selection
                 schema_objects = get_schema_objects(selected_schema)
@@ -196,8 +216,18 @@ def main():
                     selected_object = st.selectbox(
                         f"3. Select {object_type}",
                         options=object_list,
-                        help=f"Choose a {object_type.lower()} to analyze"
+                        help=f"Choose a {object_type.lower()} to analyze",
+                        key="object_selector"
                     )
+                    
+                    # Reset analysis state when table selection changes
+                    if 'previous_object' not in st.session_state:
+                        st.session_state.previous_object = selected_object
+                    elif st.session_state.previous_object != selected_object:
+                        st.session_state.analysis_complete = False
+                        if 'df' in st.session_state:
+                            del st.session_state.df
+                        st.session_state.previous_object = selected_object
 
         except Exception as e:
             st.error("Error loading options. Please check your connection.")
