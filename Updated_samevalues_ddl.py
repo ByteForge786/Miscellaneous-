@@ -75,9 +75,18 @@ def get_ddl_and_samples(schema: str, object_name: str, object_type: str) -> Tupl
     
     # First get DDL - this is required
     try:
-        ddl_query = f"SELECT GET_DDL('{object_type}', '{schema}.{object_name}')"
+        ddl_query = f"""
+        SELECT GET_DDL('{object_type}', '{schema}.{object_name}') as ddl,
+               LISTAGG(column_name, ',') WITHIN GROUP (ORDER BY ordinal_position) as columns
+        FROM information_schema.columns 
+        WHERE table_schema = '{schema}' 
+        AND table_name = '{object_name}'
+        GROUP BY 1
+        """
         ddl_df = get_data_sf(ddl_query)
-        ddl = ddl_df.iloc[0, 0]
+        ddl = ddl_df.iloc[0]['ddl']
+        columns = ddl_df.iloc[0]['columns'].split(',')
+        
     except Exception as e:
         logger.error(f"Error fetching DDL: {str(e)}")
         raise  # DDL is essential, so we raise the error
@@ -86,20 +95,10 @@ def get_ddl_and_samples(schema: str, object_name: str, object_type: str) -> Tupl
     try:
         # Single query to get non-null values for each column
         sample_query = f"""
-        SELECT * 
+        SELECT {', '.join(columns)}
         FROM {schema}.{object_name}
-        WHERE EXISTS (
-            SELECT 1 
-            FROM information_schema.columns 
-            WHERE table_schema = '{schema}' 
-            AND table_name = '{object_name}'
-        )
         QUALIFY ROW_NUMBER() OVER (
-            PARTITION BY CASE WHEN $1 IS NOT NULL THEN $1 END,
-                        CASE WHEN $2 IS NOT NULL THEN $2 END,
-                        CASE WHEN $3 IS NOT NULL THEN $3 END,
-                        -- Continue for reasonable max number of columns
-                        CASE WHEN $300 IS NOT NULL THEN $300 END
+            PARTITION BY {', '.join(f'CASE WHEN {col} IS NOT NULL THEN {col} END' for col in columns)}
         ) <= 5
         """
         samples_df = get_data_sf(sample_query)
@@ -110,10 +109,11 @@ def get_ddl_and_samples(schema: str, object_name: str, object_type: str) -> Tupl
         processed_ddl = []
         current_line_index = 0
         
-        for column in samples_df.columns:
-            values = samples_df[samples_df[column].notnull()][column].astype(str).unique().tolist()
-            if values and not all(v.lower() in ['nan', 'none', 'null', ''] for v in values):
-                samples_dict[column] = values[:5]  # Ensure we take max 5 unique values
+        for column in columns:
+            if column in samples_df.columns:  # Check if column exists in samples
+                values = samples_df[samples_df[column].notnull()][column].astype(str).unique().tolist()
+                if values and not all(v.lower() in ['nan', 'none', 'null', ''] for v in values):
+                    samples_dict[column] = values[:5]  # Ensure we take max 5 unique values
         
         # Process DDL with samples
         while current_line_index < len(ddl_lines):
