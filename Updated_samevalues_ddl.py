@@ -127,9 +127,6 @@ def get_ddl_and_samples(schema: str, object_name: str, object_type: str) -> Tupl
         logger.warning(f"Failed to fetch samples for {schema}.{object_name}: {str(e)}")
         # Return original DDL without samples if sample fetching fails
         return ddl, {}
-    except Exception as e:
-        logger.error(f"Error fetching DDL and samples: {str(e)}")
-        raise
 
 def main():
     # Page config
@@ -158,6 +155,10 @@ def main():
 
     st.title("🔍 DDL Analyzer")
     st.markdown("Analyze your database objects structure and get intelligent insights.")
+
+    # Initialize session state for analysis if not done
+    if 'analysis_complete' not in st.session_state:
+        st.session_state.analysis_complete = False
 
     # Sidebar for selections
     with st.sidebar:
@@ -219,7 +220,7 @@ def main():
                         st.write(f"**{column}**: {', '.join(str(v) for v in values)}")
             
             # Analyze button
-            if st.button("🔍 Analyze Structure"):
+            if not st.session_state.analysis_complete and st.button("🔍 Analyze Structure"):
                 with st.spinner("Analyzing structure..."):
                     # Progress bar
                     progress_bar = st.progress(0)
@@ -229,15 +230,12 @@ def main():
                     
                     # Generate prompt for LLM
                     prompt = f"""Analyze this DDL statement and provide a detailed classification of each column:
-
-{ddl}
-
-For each column, provide:
-1. Classification (choose from: Identifier, Descriptive, Temporal, Numerical, Categorical, Status)
-2. Brief explanation of the classification
-3. Suggested data quality checks
-
-Format as JSON: {{"column_name": {{"classification": "category", "explanation": "brief explanation", "data_quality_checks": ["check1", "check2"]}}}}"""
+                    {ddl}
+                    For each column, provide:
+                    1. Classification (choose from: Identifier, Descriptive, Temporal, Numerical, Categorical, Status)
+                    2. Brief explanation of the classification
+                    3. Suggested data quality checks
+                    Format as JSON: {{"column_name": {{"classification": "category", "explanation": "brief explanation", "data_quality_checks": ["check1", "check2"]}}}}"""
 
                     # Get LLM analysis
                     analysis = eval(get_llm_response(prompt))
@@ -247,63 +245,52 @@ Format as JSON: {{"column_name": {{"classification": "category", "explanation": 
                         if column in samples:
                             analysis[column]["sample_values"] = samples[column]
                     
-                    # Display results
-                    st.subheader("📊 Analysis Results")
-                    
                     # Convert to DataFrame
                     results_data = [
                         {
                             "Column": col,
                             "Classification": details["classification"],
                             "Explanation": details["explanation"],
-                            "Dummy Sample Values": ", ".join(str(v) for v in details.get("sample_values", [])),
+                            "Sample Values": ", ".join(str(v) for v in details.get("sample_values", [])),
                             "Data Quality Checks": "\n".join(details["data_quality_checks"])
                         }
                         for col, details in analysis.items()
                     ]
                     
-                    df = pd.DataFrame(results_data)
-                    
-                    # Initialize session state for DataFrame if not exists
-                    if 'analysis_df' not in st.session_state:
-                        st.session_state.analysis_df = df.copy()
-                    
-                    # Display in tabs with editable dataframe
-                    tab1, tab2 = st.tabs(["📋 Details", "📊 Summary"])
-                    
-                    with tab1:
-                        # Create an editable dataframe with disabled Enter key
-                        edited_df = st.data_editor(
-                            st.session_state.analysis_df,
-                            use_container_width=True,
-                            num_rows="fixed",  # Prevent row additions/deletions
-                            key="analysis_editor",
-                            disabled=False,
-                            on_change=lambda: setattr(st.session_state, 'analysis_df', st.session_state.analysis_editor),
-                            column_config={
-                                "Data Quality Checks": st.column_config.TextColumn(
-                                    "Data Quality Checks",
-                                    help="Edit data quality checks",
-                                    max_chars=None,
-                                    validate="^[^\\n]*$"  # Prevent newlines
-                                )
-                            }
-                        )
-                    
-                    with tab2:
-                        st.subheader("Classification Distribution")
-                        st.bar_chart(edited_df["Classification"].value_counts())
-                    
-                    # Add info about editing
-                    st.info("💡 You can edit the values in the table above. Press Tab to move between cells. The downloaded file will include your changes.")
-                    
-                    # Download option with edited dataframe
-                    st.download_button(
-                        "📥 Download Analysis",
-                        edited_df.to_csv(index=False),
-                        f"ddl_analysis_{selected_schema}_{selected_object}_{datetime.now():%Y%m%d_%H%M}.csv",
-                        "text/csv"
+                    st.session_state.df = pd.DataFrame(results_data)
+                    st.session_state.analysis_complete = True
+                    st.rerun()
+
+            # Show results if analysis is complete
+            if st.session_state.analysis_complete:
+                st.subheader("📊 Analysis Results")
+                
+                tab1, tab2 = st.tabs(["📋 Details", "📊 Summary"])
+                
+                with tab1:
+                    edited_df = st.data_editor(
+                        st.session_state.df,
+                        use_container_width=True,
+                        num_rows="fixed",
+                        disabled=False,
+                        key="editor"
                     )
+                    st.session_state.df = edited_df
+                
+                with tab2:
+                    st.subheader("Classification Distribution")
+                    st.bar_chart(edited_df["Classification"].value_counts())
+                
+                st.info("💡 You can edit the values in the table above. The downloaded file will include your changes.")
+                
+                # Download option with edited dataframe
+                st.download_button(
+                    "📥 Download Analysis",
+                    edited_df.to_csv(index=False),
+                    f"ddl_analysis_{selected_schema}_{selected_object}_{datetime.now():%Y%m%d_%H%M}.csv",
+                    "text/csv",
+                    key="download"
+                )
 
         except Exception as e:
             st.error("Error analyzing DDL. Please try again.")
