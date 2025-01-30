@@ -264,16 +264,30 @@ Format as JSON: {{"column_name": {{"classification": "category", "explanation": 
                     
                     df = pd.DataFrame(results_data)
                     
+                    # Initialize session state for DataFrame if not exists
+                    if 'analysis_df' not in st.session_state:
+                        st.session_state.analysis_df = df.copy()
+                    
                     # Display in tabs with editable dataframe
                     tab1, tab2 = st.tabs(["📋 Details", "📊 Summary"])
                     
                     with tab1:
-                        # Create an editable dataframe
+                        # Create an editable dataframe with disabled Enter key
                         edited_df = st.data_editor(
-                            df,
+                            st.session_state.analysis_df,
                             use_container_width=True,
                             num_rows="fixed",  # Prevent row additions/deletions
-                            key="analysis_editor"
+                            key="analysis_editor",
+                            disabled=False,
+                            on_change=lambda: setattr(st.session_state, 'analysis_df', st.session_state.analysis_editor),
+                            column_config={
+                                "Data Quality Checks": st.column_config.TextColumn(
+                                    "Data Quality Checks",
+                                    help="Edit data quality checks",
+                                    max_chars=None,
+                                    validate="^[^\\n]*$"  # Prevent newlines
+                                )
+                            }
                         )
                     
                     with tab2:
@@ -281,7 +295,7 @@ Format as JSON: {{"column_name": {{"classification": "category", "explanation": 
                         st.bar_chart(edited_df["Classification"].value_counts())
                     
                     # Add info about editing
-                    st.info("💡 You can edit the values in the table above. The downloaded file will include your changes.")
+                    st.info("💡 You can edit the values in the table above. Press Tab to move between cells. The downloaded file will include your changes.")
                     
                     # Download option with edited dataframe
                     st.download_button(
