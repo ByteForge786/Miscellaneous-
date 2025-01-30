@@ -258,20 +258,29 @@ Format as JSON: {{"column_name": {{"classification": "category", "explanation": 
                     
                     df = pd.DataFrame(results_data)
                     
-                    # Display in tabs
+                    # Display in tabs with editable dataframe
                     tab1, tab2 = st.tabs(["📋 Details", "📊 Summary"])
                     
                     with tab1:
-                        st.dataframe(df, use_container_width=True)
+                        # Create an editable dataframe
+                        edited_df = st.data_editor(
+                            df,
+                            use_container_width=True,
+                            num_rows="fixed",  # Prevent row additions/deletions
+                            key="analysis_editor"
+                        )
                     
                     with tab2:
                         st.subheader("Classification Distribution")
-                        st.bar_chart(df["Classification"].value_counts())
+                        st.bar_chart(edited_df["Classification"].value_counts())
                     
-                    # Download option
+                    # Add info about editing
+                    st.info("💡 You can edit the values in the table above. The downloaded file will include your changes.")
+                    
+                    # Download option with edited dataframe
                     st.download_button(
                         "📥 Download Analysis",
-                        df.to_csv(index=False),
+                        edited_df.to_csv(index=False),
                         f"ddl_analysis_{selected_schema}_{selected_object}_{datetime.now():%Y%m%d_%H%M}.csv",
                         "text/csv"
                     )
