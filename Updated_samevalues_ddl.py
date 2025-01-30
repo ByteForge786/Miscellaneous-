@@ -73,32 +73,48 @@ def get_ddl_and_samples(schema: str, object_name: str, object_type: str) -> Tupl
     """Fetches DDL and optionally sample values for specific object"""
     logger.info(f"Fetching DDL and samples for {object_type} {schema}.{object_name}")
     
-    # First get DDL - this is required
+    # First get column information - we need this for samples
     try:
-        ddl_query = f"""
-        SELECT GET_DDL('{object_type}', '{schema}.{object_name}') as ddl,
-               LISTAGG(column_name, ',') WITHIN GROUP (ORDER BY ordinal_position) as columns
+        columns_query = f"""
+        SELECT column_name
         FROM information_schema.columns 
         WHERE table_schema = '{schema}' 
         AND table_name = '{object_name}'
-        GROUP BY 1
+        ORDER BY ordinal_position
         """
+        columns_df = get_data_sf(columns_query)
+        if columns_df.empty:
+            logger.warning(f"No columns found for {schema}.{object_name}")
+            return ddl, {}
+            
+        columns = columns_df['column_name'].tolist()
+    except Exception as e:
+        logger.error(f"Error fetching column information: {str(e)}")
+        raise
+
+    # Get DDL
+    try:
+        ddl_query = f"SELECT GET_DDL('{object_type}', '{schema}.{object_name}')"
         ddl_df = get_data_sf(ddl_query)
-        ddl = ddl_df.iloc[0]['ddl']
-        columns = ddl_df.iloc[0]['columns'].split(',')
-        
+        ddl = ddl_df.iloc[0, 0]
     except Exception as e:
         logger.error(f"Error fetching DDL: {str(e)}")
         raise  # DDL is essential, so we raise the error
         
     # Then try to get samples - this is optional
     try:
-        # Single query to get non-null values for each column
+        # Single query to get samples
+        non_null_conditions = [f"{col} IS NOT NULL" for col in columns]
         sample_query = f"""
-        SELECT {', '.join(columns)}
-        FROM {schema}.{object_name}
-        QUALIFY ROW_NUMBER() OVER (
-            PARTITION BY {', '.join(f'CASE WHEN {col} IS NOT NULL THEN {col} END' for col in columns)}
+        WITH sample_data AS (
+            SELECT {', '.join(columns)}
+            FROM {schema}.{object_name}
+            WHERE {' OR '.join(non_null_conditions)}
+        )
+        SELECT DISTINCT {', '.join(columns)}
+        FROM sample_data
+        QUALIFY ROW_NUMBER() OVER (PARTITION BY 
+            {', '.join(f'CASE WHEN {col} IS NOT NULL THEN {col} END' for col in columns)}
         ) <= 5
         """
         samples_df = get_data_sf(sample_query)
