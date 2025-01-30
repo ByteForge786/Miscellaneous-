@@ -73,26 +73,7 @@ def get_ddl_and_samples(schema: str, object_name: str, object_type: str) -> Tupl
     """Fetches DDL and optionally sample values for specific object"""
     logger.info(f"Fetching DDL and samples for {object_type} {schema}.{object_name}")
     
-    # First get column information - we need this for samples
-    try:
-        columns_query = f"""
-        SELECT column_name
-        FROM information_schema.columns 
-        WHERE table_schema = '{schema}' 
-        AND table_name = '{object_name}'
-        ORDER BY ordinal_position
-        """
-        columns_df = get_data_sf(columns_query)
-        if columns_df.empty:
-            logger.warning(f"No columns found for {schema}.{object_name}")
-            return ddl, {}
-            
-        columns = columns_df['column_name'].tolist()
-    except Exception as e:
-        logger.error(f"Error fetching column information: {str(e)}")
-        raise
-
-    # Get DDL
+    # First get DDL - this is required
     try:
         ddl_query = f"SELECT GET_DDL('{object_type}', '{schema}.{object_name}')"
         ddl_df = get_data_sf(ddl_query)
@@ -103,19 +84,11 @@ def get_ddl_and_samples(schema: str, object_name: str, object_type: str) -> Tupl
         
     # Then try to get samples - this is optional
     try:
-        # Single query to get samples
-        non_null_conditions = [f"{col} IS NOT NULL" for col in columns]
+        # Get sample values
         sample_query = f"""
-        WITH sample_data AS (
-            SELECT {', '.join(columns)}
-            FROM {schema}.{object_name}
-            WHERE {' OR '.join(non_null_conditions)}
-        )
-        SELECT DISTINCT {', '.join(columns)}
-        FROM sample_data
-        QUALIFY ROW_NUMBER() OVER (PARTITION BY 
-            {', '.join(f'CASE WHEN {col} IS NOT NULL THEN {col} END' for col in columns)}
-        ) <= 5
+        SELECT *
+        FROM {schema}.{object_name}
+        LIMIT 5
         """
         samples_df = get_data_sf(sample_query)
         
@@ -125,26 +98,22 @@ def get_ddl_and_samples(schema: str, object_name: str, object_type: str) -> Tupl
         processed_ddl = []
         current_line_index = 0
         
-        for column in columns:
-            if column in samples_df.columns:  # Check if column exists in samples
-                values = samples_df[samples_df[column].notnull()][column].astype(str).unique().tolist()
-                if values and not all(v.lower() in ['nan', 'none', 'null', ''] for v in values):
-                    samples_dict[column] = values[:5]  # Ensure we take max 5 unique values
-        
-        # Process DDL with samples
+        # Process each line of DDL
         while current_line_index < len(ddl_lines):
             line = ddl_lines[current_line_index]
             processed_ddl.append(line)
             
             # Check if this line contains a column definition
-            for column in samples_dict:
+            for column in samples_df.columns:
                 if column in line and (',' in line or ')' in line):  # Column definition line
-                    values = samples_dict[column]
+                    values = samples_df[column].astype(str).tolist()
                     # If any value > 50 chars, keep only one sample
                     if any(len(str(v)) > 50 for v in values):
+                        samples_dict[column] = [values[0]]
                         sample_str = f"    -- Dummy Sample: {values[0]}"
                     else:
-                        sample_str = f"    -- Dummy Samples: {', '.join(str(v) for v in values)}"
+                        samples_dict[column] = values[:5]
+                        sample_str = f"    -- Dummy Samples: {', '.join(str(v) for v in values[:5])}"
                     processed_ddl.append(sample_str)
                     break
                     
