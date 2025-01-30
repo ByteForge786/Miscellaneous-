@@ -103,32 +103,44 @@ def get_ddl_and_samples(schema: str, object_name: str, object_type: str) -> Tupl
             line = ddl_lines[current_line_index]
             processed_ddl.append(line)
             
-            # Check if this line contains a column definition
-            for column in samples_df.columns:
-                if column in line and (',' in line or ')' in line):  # Column definition line
-                    values = samples_df[column].tolist()
-                    # Convert to string and filter out None, NaN, NaT, empty strings
-                    valid_values = [str(v) for v in values if pd.notna(v) and v is not None 
-                            and not pd.isna(v) and not pd.isnull(v)  # handles NaN and NaT
-                            and str(v).strip().lower() not in ['none', 'nan', 'nat', '']
-                            and str(v).strip() != '[]']  # Skip empty lists
-                    
-                    if valid_values:  # Only add sample if we have valid values
-                        # If any value > 50 chars, keep only one sample
-                        if any(len(str(v)) > 50 for v in valid_values):
-                            samples_dict[column] = [valid_values[0]]
-                            sample_str = f"    -- Dummy Sample: {valid_values[0]}"
-                            processed_ddl.append(sample_str)
-                        else:
-                            samples_dict[column] = valid_values[:5]
-                            if valid_values[:5]:  # Only add if we have values to show
-                                sample_str = f"    -- Dummy Samples: {', '.join(valid_values[:5])}"
+            # Process each line of DDL
+            while current_line_index < len(ddl_lines):
+                line = ddl_lines[current_line_index]
+                is_column_line = False
+                
+                # Check if this line contains a column definition
+                for column in samples_df.columns:
+                    if column in line and (',' in line or ')' in line):  # Column definition line
+                        is_column_line = True
+                        values = samples_df[column].tolist()
+                        # Convert to string and filter out None, NaN, NaT, empty strings
+                        valid_values = [str(v) for v in values if pd.notna(v) and v is not None 
+                                and not pd.isna(v) and not pd.isnull(v)  # handles NaN and NaT
+                                and str(v).strip().lower() not in ['none', 'nan', 'nat', '']
+                                and str(v).strip() != '[]']  # Skip empty lists
+                        
+                        # Add the column definition line
+                        processed_ddl.append(line)
+                        
+                        # Add sample values if they exist
+                        if valid_values:  # Only add sample if we have valid values
+                            # If any value > 50 chars, keep only one sample
+                            if any(len(str(v)) > 50 for v in valid_values):
+                                samples_dict[column] = [valid_values[0]]
+                                sample_str = f"    -- Dummy Sample: {valid_values[0]}"
                                 processed_ddl.append(sample_str)
-                    processed_ddl.append(line)  # Add the original line
-                    break
+                            else:
+                                samples_dict[column] = valid_values[:5]
+                                if valid_values[:5]:  # Only add if we have values to show
+                                    sample_str = f"    -- Dummy Samples: {', '.join(valid_values[:5])}"
+                                    processed_ddl.append(sample_str)
+                        break
+                
+                # If not a column line, add it directly
+                if not is_column_line:
+                    processed_ddl.append(line)
                     
-            if not any(column in line and (',' in line or ')' in line) for column in samples_df.columns):
-                processed_ddl.append(line)  # Add lines that don't contain column definitions
+                current_line_index += 1
                     
             current_line_index += 1
                     
