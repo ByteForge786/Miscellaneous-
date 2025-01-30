@@ -84,17 +84,23 @@ def get_ddl_and_samples(schema: str, object_name: str, object_type: str) -> Tupl
         
     # Then try to get samples - this is optional
     try:
-        # Get sample values with row numbers for each column
+        # Single query to get non-null values for each column
         sample_query = f"""
-        WITH column_data AS (
-            SELECT *,
-                   ROW_NUMBER() OVER (PARTITION BY 
-                       {', '.join(f'CASE WHEN {col} IS NOT NULL THEN {col} END' for col in ddl_df.columns)}
-                   ) as rn
-            FROM {schema}.{object_name}
-            WHERE {' OR '.join(f'{col} IS NOT NULL' for col in ddl_df.columns)}
+        SELECT * 
+        FROM {schema}.{object_name}
+        WHERE EXISTS (
+            SELECT 1 
+            FROM information_schema.columns 
+            WHERE table_schema = '{schema}' 
+            AND table_name = '{object_name}'
         )
-        SELECT * FROM column_data WHERE rn <= 5
+        QUALIFY ROW_NUMBER() OVER (
+            PARTITION BY CASE WHEN $1 IS NOT NULL THEN $1 END,
+                        CASE WHEN $2 IS NOT NULL THEN $2 END,
+                        CASE WHEN $3 IS NOT NULL THEN $3 END,
+                        -- Continue for reasonable max number of columns
+                        CASE WHEN $300 IS NOT NULL THEN $300 END
+        ) <= 5
         """
         samples_df = get_data_sf(sample_query)
         
@@ -105,10 +111,9 @@ def get_ddl_and_samples(schema: str, object_name: str, object_type: str) -> Tupl
         current_line_index = 0
         
         for column in samples_df.columns:
-            if column != 'rn':  # Skip row number column
-                values = samples_df[samples_df[column].notnull()][column].astype(str).unique().tolist()
-                if values and not all(v.lower() in ['nan', 'none', 'null', ''] for v in values):
-                    samples_dict[column] = values[:5]  # Ensure we take max 5 unique values
+            values = samples_df[samples_df[column].notnull()][column].astype(str).unique().tolist()
+            if values and not all(v.lower() in ['nan', 'none', 'null', ''] for v in values):
+                samples_dict[column] = values[:5]  # Ensure we take max 5 unique values
         
         # Process DDL with samples
         while current_line_index < len(ddl_lines):
