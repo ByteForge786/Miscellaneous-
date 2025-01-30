@@ -95,25 +95,31 @@ def get_ddl_and_samples(schema: str, object_name: str, object_type: str) -> Tupl
         # Process samples for each column
         samples_dict = {}
         ddl_lines = ddl.split('\n')
-        new_ddl_lines = []
+        processed_ddl = []
+        current_line_index = 0
         
-        for column in samples_df.columns:
-            values = samples_df[column].astype(str).tolist()
-            # If any value > 50 chars, keep only one sample
-            if any(len(str(v)) > 50 for v in values):
-                samples_dict[column] = [values[0]]
-                sample_str = f"-- Dummy Sample: {values[0]}"
-            else:
-                samples_dict[column] = values[:5]
-                sample_str = f"-- Dummy Samples: {', '.join(str(v) for v in values[:5])}"
+        # Process each line of DDL
+        while current_line_index < len(ddl_lines):
+            line = ddl_lines[current_line_index]
+            processed_ddl.append(line)
             
-            # Add samples to DDL
-            for i, line in enumerate(ddl_lines):
-                new_ddl_lines.append(line)
-                if column in line and ',' in line:  # Column definition line
-                    new_ddl_lines.append(f"    {sample_str}")
+            # Check if this line contains a column definition
+            for column in samples_df.columns:
+                if column in line and (',' in line or ')' in line):  # Column definition line
+                    values = samples_df[column].astype(str).tolist()
+                    # If any value > 50 chars, keep only one sample
+                    if any(len(str(v)) > 50 for v in values):
+                        samples_dict[column] = [values[0]]
+                        sample_str = f"    -- Dummy Sample: {values[0]}"
+                    else:
+                        samples_dict[column] = values[:5]
+                        sample_str = f"    -- Dummy Samples: {', '.join(str(v) for v in values[:5])}"
+                    processed_ddl.append(sample_str)
+                    break
                     
-        modified_ddl = '\n'.join(new_ddl_lines)
+            current_line_index += 1
+                    
+        modified_ddl = '\n'.join(processed_ddl)
         logger.info(f"Successfully fetched samples for {schema}.{object_name}")
         return modified_ddl, samples_dict
         
