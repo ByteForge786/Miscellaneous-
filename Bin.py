@@ -5,6 +5,7 @@ from datetime import datetime
 import time
 from typing import List, Dict, Tuple
 from sentence_transformers import SentenceTransformer
+import numpy as np
 import pickle
 import os
 
@@ -58,19 +59,28 @@ def create_classification_prompt(column_name: str, explanation: str) -> str:
         f"Consider the privacy impact and potential for misuse."
     )
 
+def predict_texts(model, head, texts, id_to_label):
+    """Make predictions for texts"""
+    # Get embeddings
+    embeddings = model.encode(texts)
+    
+    # Get predictions and probabilities
+    probabilities = head.predict_proba(embeddings)
+    predictions = head.predict(embeddings)
+    
+    # Convert numeric predictions to labels
+    predicted_labels = [id_to_label[pred] for pred in predictions]
+    confidences = np.max(probabilities, axis=1)
+    
+    return predicted_labels, confidences
+
 def classify_sensitivity(texts_to_classify: List[str]) -> List[str]:
     """Function to classify a list of texts using SetFit model"""
     logger.info(f"Classifying {len(texts_to_classify)} columns for sensitivity")
     model, head, id_to_label = load_model_and_head()
     
-    # Get embeddings
-    embeddings = model.encode(texts_to_classify)
-    
-    # Get predictions
-    predictions = head.predict(embeddings)
-    
-    # Convert numeric predictions to labels
-    predicted_labels = [id_to_label[pred] for pred in predictions]
+    # Use the original predict_texts function
+    predicted_labels, _ = predict_texts(model, head, texts_to_classify, id_to_label)
     
     return predicted_labels
 
