@@ -70,6 +70,59 @@ def classify_sensitivity(texts_to_classify: List[str]) -> List[str]:
     
     return predicted_labels
 
+@st.cache_data(ttl=3600)
+def get_schema_list() -> List[str]:
+    """Fetches list of schemas - cached globally for 1 hour"""
+    logger.info("Fetching schema list")
+    try:
+        query = """
+        SELECT SCHEMA_NAME as name 
+        FROM information_schema.schemata 
+        WHERE SCHEMA_NAME NOT LIKE 'INFORMATION_SCHEMA%'
+        ORDER BY SCHEMA_NAME
+        """
+        df = get_data_sf(query)
+        schemas = df['name'].tolist()
+        logger.info(f"Cached {len(schemas)} schemas globally")
+        return schemas
+    except Exception as e:
+        logger.error(f"Error fetching schemas: {str(e)}")
+        raise
+
+@st.cache_data(ttl=3600)
+def get_schema_objects(schema: str) -> Dict[str, List[str]]:
+    """Fetches objects for a schema - cached globally for 1 hour"""
+    logger.info(f"Fetching objects for schema: {schema}")
+    try:
+        # Get tables
+        tables_query = f"""
+        SELECT TABLE_NAME as name
+        FROM information_schema.tables
+        WHERE TABLE_SCHEMA = '{schema}'
+        AND TABLE_TYPE = 'BASE TABLE'
+        ORDER BY TABLE_NAME
+        """
+        tables_df = get_data_sf(tables_query)
+        
+        # Get views
+        views_query = f"""
+        SELECT TABLE_NAME as name
+        FROM information_schema.views
+        WHERE TABLE_SCHEMA = '{schema}'
+        ORDER BY TABLE_NAME
+        """
+        views_df = get_data_sf(views_query)
+        
+        result = {
+            "tables": tables_df['name'].tolist(),
+            "views": views_df['name'].tolist()
+        }
+        logger.info(f"Cached objects for {schema}: {len(result['tables'])} tables, {len(result['views'])} views")
+        return result
+    except Exception as e:
+        logger.error(f"Error fetching objects for {schema}: {str(e)}")
+        raise
+
 def get_ddl(schema: str, object_name: str, object_type: str) -> str:
     """Fetches DDL for specific object"""
     logger.info(f"Fetching DDL for {object_type} {schema}.{object_name}")
@@ -81,8 +134,6 @@ def get_ddl(schema: str, object_name: str, object_type: str) -> str:
     except Exception as e:
         logger.error(f"Error fetching DDL: {str(e)}")
         raise
-
-[... keep your existing schema and objects fetching functions unchanged ...]
 
 def main():
     # Page config
@@ -116,7 +167,52 @@ def main():
     if 'analysis_complete' not in st.session_state:
         st.session_state.analysis_complete = False
 
-    [... keep your existing sidebar code unchanged ...]
+    # Sidebar for selections
+    with st.sidebar:
+        st.header("Object Selection")
+        
+        try:
+            # 1. Schema Selection
+            available_schemas = get_schema_list()
+            if not available_schemas:
+                st.error("No schemas available")
+                return
+                
+            selected_schema = st.selectbox(
+                "1. Select Schema",
+                options=available_schemas,
+                help="Choose a schema to explore",
+                key="schema_selector"
+            )
+
+            if selected_schema:
+                # 2. Object Type Selection
+                object_type = st.radio(
+                    "2. Select Object Type",
+                    options=["TABLE", "VIEW"],
+                    help="Choose the type of object to analyze",
+                    key="object_type"
+                )
+
+                # 3. Object Selection
+                schema_objects = get_schema_objects(selected_schema)
+                object_list = schema_objects["tables"] if object_type == "TABLE" else schema_objects["views"]
+                
+                if not object_list:
+                    st.warning(f"No {object_type.lower()}s found in {selected_schema}")
+                    selected_object = None
+                else:
+                    selected_object = st.selectbox(
+                        f"3. Select {object_type}",
+                        options=object_list,
+                        help=f"Choose a {object_type.lower()} to analyze",
+                        key="object_selector"
+                    )
+
+        except Exception as e:
+            st.error("Error loading options. Please check your connection.")
+            logger.error(f"Error in selection options: {str(e)}")
+            return
 
     # Main content area
     if 'selected_schema' in locals() and 'selected_object' in locals() and selected_object:
@@ -156,6 +252,12 @@ def main():
                     # Get sensitivity predictions in batch
                     sensitivity_predictions = classify_sensitivity(classification_prompts)
                     
+                    # Transform "Non-person data" to "Confidential Information"
+                    transformed_predictions = [
+                        "Confidential Information" if pred == "Non-person data" else pred 
+                        for pred in sensitivity_predictions
+                    ]
+                    
                     # Convert to DataFrame
                     results_data = [
                         {
@@ -163,7 +265,7 @@ def main():
                             "Explanation": explanation,
                             "Data Sensitivity": sensitivity
                         }
-                        for (col, explanation), sensitivity in zip(analysis.items(), sensitivity_predictions)
+                        for (col, explanation), sensitivity in zip(analysis.items(), transformed_predictions)
                     ]
                     
                     st.session_state.df = pd.DataFrame(results_data)
@@ -174,22 +276,41 @@ def main():
             if st.session_state.analysis_complete:
                 st.subheader("📊 Analysis Results")
                 
+                # Predefined sensitivity options
+                SENSITIVITY_OPTIONS = [
+                    "Sensitive PII",
+                    "Non-sensitive PII",
+                    "Confidential Information",
+                    "Licensed Data"
+                ]
+                
                 edited_df = st.data_editor(
                     st.session_state.df,
                     use_container_width=True,
                     column_config={
                         "Column Name": st.column_config.TextColumn("Column Name", width="medium"),
                         "Explanation": st.column_config.TextColumn("Explanation", width="large"),
-                        "Data Sensitivity": st.column_config.TextColumn(
+                        "Data Sensitivity": st.column_config.SelectboxColumn(
                             "Data Sensitivity",
                             width="medium",
-                            help="Predicted data sensitivity classification"
+                            help="Predicted data sensitivity classification",
+                            options=SENSITIVITY_OPTIONS,
+                            required=True
                         )
                     },
                     num_rows="fixed",
                     disabled=False,
                     key="editor"
                 )
+                
+                # Standardize sensitivity values in the DataFrame
+                if edited_df is not None:
+                    edited_df['Data Sensitivity'] = edited_df['Data Sensitivity'].apply(
+                        lambda x: next(
+                            (option for option in SENSITIVITY_OPTIONS if option.lower() == str(x).lower()),
+                            x  # Keep original if no match found
+                        )
+                    )
                 st.session_state.df = edited_df
                 
                 st.info("💡 You can edit the values in the table above. The downloaded file will include your changes.")
