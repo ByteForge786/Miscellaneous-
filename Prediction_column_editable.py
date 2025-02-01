@@ -46,7 +46,6 @@ def classify_sensitivity(texts_to_classify: List[str]) -> List[str]:
     logger.info(f"Classifying {len(texts_to_classify)} columns for sensitivity")
     model, tokenizer = get_model_and_tokenizer()
     
-    # Process all texts in a single batch
     inputs = tokenizer(
         texts_to_classify,
         return_tensors="pt",
@@ -123,17 +122,75 @@ def get_schema_objects(schema: str) -> Dict[str, List[str]]:
         logger.error(f"Error fetching objects for {schema}: {str(e)}")
         raise
 
-def get_ddl(schema: str, object_name: str, object_type: str) -> str:
-    """Fetches DDL for specific object"""
-    logger.info(f"Fetching DDL for {object_type} {schema}.{object_name}")
+def get_ddl_and_samples(schema: str, object_name: str, object_type: str) -> Tuple[str, Dict[str, List[str]]]:
+    """Fetches DDL and optionally sample values for specific object"""
+    logger.info(f"Fetching DDL and samples for {object_type} {schema}.{object_name}")
     
+    # First get DDL - this is required
     try:
         ddl_query = f"SELECT GET_DDL('{object_type}', '{schema}.{object_name}')"
         ddl_df = get_data_sf(ddl_query)
-        return ddl_df.iloc[0, 0]
+        ddl = ddl_df.iloc[0, 0]
     except Exception as e:
         logger.error(f"Error fetching DDL: {str(e)}")
         raise
+        
+    # Then try to get samples - this is optional
+    try:
+        sample_query = f"""
+        SELECT *
+        FROM {schema}.{object_name}
+        LIMIT 5
+        """
+        samples_df = get_data_sf(sample_query)
+        
+        # Process samples for each column
+        samples_dict = {}
+        ddl_lines = ddl.split('\n')
+        processed_ddl = []
+        current_line_index = 0
+        
+        # Process each line of DDL
+        while current_line_index < len(ddl_lines):
+            line = ddl_lines[current_line_index]
+            is_column_line = False
+            
+            # Check if this line contains a column definition
+            for column in samples_df.columns:
+                if column in line and (',' in line or ')' in line):
+                    is_column_line = True
+                    values = samples_df[column].tolist()
+                    valid_values = [str(v) for v in values if pd.notna(v) and v is not None 
+                            and not pd.isna(v) and not pd.isnull(v)
+                            and str(v).strip().lower() not in ['none', 'nan', 'nat', '']
+                            and str(v).strip() != '[]']
+                    
+                    processed_ddl.append(line)
+                    
+                    if valid_values:
+                        if any(len(str(v)) > 50 for v in valid_values):
+                            samples_dict[column] = [valid_values[0]]
+                            sample_str = f"    -- Sample: {valid_values[0]}"
+                            processed_ddl.append(sample_str)
+                        else:
+                            samples_dict[column] = valid_values[:5]
+                            if valid_values[:5]:
+                                sample_str = f"    -- Samples: {', '.join(valid_values[:5])}"
+                                processed_ddl.append(sample_str)
+                    break
+            
+            if not is_column_line:
+                processed_ddl.append(line)
+                
+            current_line_index += 1
+                    
+        modified_ddl = '\n'.join(processed_ddl)
+        logger.info(f"Successfully fetched samples for {schema}.{object_name}")
+        return modified_ddl, samples_dict
+        
+    except Exception as e:
+        logger.warning(f"Failed to fetch samples for {schema}.{object_name}: {str(e)}")
+        return ddl, {}
 
 def main():
     # Page config
@@ -163,16 +220,18 @@ def main():
     st.title("🔍 DDL Analyzer")
     st.markdown("Analyze your database objects structure and get intelligent insights.")
 
-    # Initialize session state for analysis if not done
+    # Initialize session state
     if 'analysis_complete' not in st.session_state:
         st.session_state.analysis_complete = False
+    if 'editor_key' not in st.session_state:
+        st.session_state.editor_key = 0
 
     # Sidebar for selections
     with st.sidebar:
         st.header("Object Selection")
         
         try:
-            # 1. Schema Selection
+            # Schema Selection
             available_schemas = get_schema_list()
             if not available_schemas:
                 st.error("No schemas available")
@@ -184,17 +243,39 @@ def main():
                 help="Choose a schema to explore",
                 key="schema_selector"
             )
+            
+            # Reset analysis state when schema changes
+            if 'previous_schema' not in st.session_state:
+                st.session_state.previous_schema = selected_schema
+            elif st.session_state.previous_schema != selected_schema:
+                st.session_state.analysis_complete = False
+                if 'df' in st.session_state:
+                    del st.session_state.df
+                if 'temp_df' in st.session_state:
+                    del st.session_state.temp_df
+                st.session_state.previous_schema = selected_schema
 
             if selected_schema:
-                # 2. Object Type Selection
+                # Object Type Selection
                 object_type = st.radio(
                     "2. Select Object Type",
                     options=["TABLE", "VIEW"],
                     help="Choose the type of object to analyze",
                     key="object_type"
                 )
+                
+                # Reset analysis state when object type changes
+                if 'previous_type' not in st.session_state:
+                    st.session_state.previous_type = object_type
+                elif st.session_state.previous_type != object_type:
+                    st.session_state.analysis_complete = False
+                    if 'df' in st.session_state:
+                        del st.session_state.df
+                    if 'temp_df' in st.session_state:
+                        del st.session_state.temp_df
+                    st.session_state.previous_type = object_type
 
-                # 3. Object Selection
+                # Object Selection
                 schema_objects = get_schema_objects(selected_schema)
                 object_list = schema_objects["tables"] if object_type == "TABLE" else schema_objects["views"]
                 
@@ -208,6 +289,17 @@ def main():
                         help=f"Choose a {object_type.lower()} to analyze",
                         key="object_selector"
                     )
+                    
+                    # Reset analysis state when object changes
+                    if 'previous_object' not in st.session_state:
+                        st.session_state.previous_object = selected_object
+                    elif st.session_state.previous_object != selected_object:
+                        st.session_state.analysis_complete = False
+                        if 'df' in st.session_state:
+                            del st.session_state.df
+                        if 'temp_df' in st.session_state:
+                            del st.session_state.temp_df
+                        st.session_state.previous_object = selected_object
 
         except Exception as e:
             st.error("Error loading options. Please check your connection.")
@@ -217,13 +309,17 @@ def main():
     # Main content area
     if 'selected_schema' in locals() and 'selected_object' in locals() and selected_object:
         try:
-            # Get DDL
-            ddl = get_ddl(selected_schema, selected_object, object_type)
+            # Get DDL and samples
+            ddl, samples = get_ddl_and_samples(selected_schema, selected_object, object_type)
             
             # Display DDL
             st.subheader("📝 DDL Statement")
             with st.expander("View DDL", expanded=True):
                 st.code(ddl, language='sql')
+                if samples:
+                    st.subheader("Sample Values")
+                    for column, values in samples.items():
+                        st.write(f"**{column}**: {', '.join(str(v) for v in values)}")
             
             # Analyze button
             if not st.session_state.analysis_complete and st.button("🔍 Analyze Structure"):
@@ -234,36 +330,38 @@ def main():
                         time.sleep(0.01)
                         progress_bar.progress(i + 1)
                     
-                    # Generate prompt for LLM
+                    # Generate prompt for analysis
                     prompt = f"""Analyze this DDL statement and provide an explanation for each column:
                     {ddl}
                     For each column, provide a clear, concise explanation of what the column represents.
                     Format as JSON: {{"column_name": "explanation of what this column represents"}}"""
 
-                    # Get LLM analysis
+                    # Get analysis
                     analysis = eval(get_llm_response(prompt))
                     
-                    # Create classification prompts for sensitivity prediction
+                    # Create classification prompts
                     classification_prompts = [
                         create_classification_prompt(col, explanation) 
                         for col, explanation in analysis.items()
                     ]
                     
-                    # Get sensitivity predictions in batch
+                    # Get sensitivity predictions
                     sensitivity_predictions = classify_sensitivity(classification_prompts)
                     
-                    # Transform "Non-person data" to "Confidential Information"
+                    # Transform predictions
                     transformed_predictions = [
                         "Confidential Information" if pred == "Non-person data" else pred 
                         for pred in sensitivity_predictions
                     ]
                     
-                    # Convert to DataFrame
+                    # Prepare results data
                     results_data = [
                         {
                             "Column Name": col,
                             "Explanation": explanation,
-                            "Data Sensitivity": sensitivity
+                            "Data Sensitivity": sensitivity,
+                            "Sample Values": ", ".join(str(v) for v in samples.get(col, []))
+                                            if col in samples and samples[col] else ""
                         }
                         for (col, explanation), sensitivity in zip(analysis.items(), transformed_predictions)
                     ]
@@ -276,6 +374,14 @@ def main():
             if st.session_state.analysis_complete:
                 st.subheader("📊 Analysis Results")
                 
+                # Add a submit button for changes
+                col1, col2 = st.columns([3, 1])
+                with col1:
+                    st.info("💡 Make all your changes in the table below, then click 'Save Changes' to update.")
+                
+                with col2:
+                    submit_changes = st.button("💾 Save Changes", key="save_changes")
+                
                 # Predefined sensitivity options
                 SENSITIVITY_OPTIONS = [
                     "Sensitive PII",
@@ -284,18 +390,35 @@ def main():
                     "Licensed Data"
                 ]
                 
+                # Initialize temporary state for edits if not exists
+                if 'temp_df' not in st.session_state:
+                    st.session_state.temp_df = st.session_state.df.copy()
+                
+                # Create an editable dataframe with batch saves
                 edited_df = st.data_editor(
-                    st.session_state.df,
+                    st.session_state.temp_df,  # Use temporary DataFrame for edits
                     use_container_width=True,
                     column_config={
-                        "Column Name": st.column_config.TextColumn("Column Name", width="medium"),
-                        "Explanation": st.column_config.TextColumn("Explanation", width="large"),
+                        "Column Name": st.column_config.TextColumn(
+                            "Column Name",
+                            width="medium",
+                            required=True
+                        ),
+                        "Explanation": st.column_config.TextColumn(
+                            "Explanation",
+                            width="large"
+                        ),
                         "Data Sensitivity": st.column_config.SelectboxColumn(
                             "Data Sensitivity",
                             width="medium",
-                            help="Predicted data sensitivity classification",
+                            help="Data sensitivity classification",
                             options=SENSITIVITY_OPTIONS,
                             required=True
+                        ),
+                        "Sample Values": st.column_config.TextColumn(
+                            "Sample Values",
+                            width="large",
+                            help="Sample values from the data"
                         )
                     },
                     num_rows="fixed",
@@ -303,22 +426,32 @@ def main():
                     key="editor"
                 )
                 
-                # Standardize sensitivity values in the DataFrame
-                if edited_df is not None:
-                    edited_df['Data Sensitivity'] = edited_df['Data Sensitivity'].apply(
-                        lambda x: next(
-                            (option for option in SENSITIVITY_OPTIONS if option.lower() == str(x).lower()),
-                            x  # Keep original if no match found
+                # Update temporary state with current edits
+                st.session_state.temp_df = edited_df
+                
+                # Only update final state if save button is clicked
+                if submit_changes:
+                    # Standardize sensitivity values in the DataFrame
+                    if edited_df is not None:
+                        edited_df['Data Sensitivity'] = edited_df['Data Sensitivity'].apply(
+                            lambda x: next(
+                                (option for option in SENSITIVITY_OPTIONS if option.lower() == str(x).lower()),
+                                x  # Keep original if no match found
+                            )
                         )
-                    )
-                st.session_state.df = edited_df
+                    st.session_state.df = edited_df.copy()  # Save to final state
+                    st.success("✅ Changes saved successfully!")
+                    st.balloons()
                 
-                st.info("💡 You can edit the values in the table above. The downloaded file will include your changes.")
+                # Add visualization of sensitivity distribution using the temporary state
+                st.subheader("Data Sensitivity Distribution")
+                sensitivity_counts = st.session_state.temp_df["Data Sensitivity"].value_counts()
+                st.bar_chart(sensitivity_counts)
                 
-                # Download option with edited dataframe
+                # Download option with saved state
                 st.download_button(
                     "📥 Download Analysis",
-                    edited_df.to_csv(index=False),
+                    st.session_state.df.to_csv(index=False),  # Use saved state for download
                     f"ddl_analysis_{selected_schema}_{selected_object}_{datetime.now():%Y%m%d_%H%M}.csv",
                     "text/csv",
                     key="download"
