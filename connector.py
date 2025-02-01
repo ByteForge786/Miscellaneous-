@@ -1,9 +1,9 @@
 import snowflake.connector
-from snowflake.connector.connection_pool import SimpleConnectionPool
 import streamlit as st
 import logging
 import time
 from datetime import datetime
+import queue
 
 logging.basicConfig(
     level=logging.INFO,
@@ -23,132 +23,140 @@ class DynamicSnowflakePool:
                  initial_pool_size=5,
                  min_pool_size=3,
                  max_pool_size=50,
-                 scale_up_threshold=0.8,
-                 scale_down_threshold=0.3,
                  connection_timeout=30):
         
         self._min_pool_size = min_pool_size
         self._max_pool_size = max_pool_size
         self._current_pool_size = initial_pool_size
-        self._scale_up_threshold = scale_up_threshold
-        self._scale_down_threshold = scale_down_threshold
-        self._active_connections = 0
-        self._free_connections = set()  # Track free connections
         self.connection_timeout = connection_timeout
         
-        self._create_pool(self._current_pool_size)
-        logger.info(f"Initialized dynamic pool with size: {self._current_pool_size}")
+        # Use queue for free connections
+        self._free_connections = queue.Queue()
+        self._active_connections = {}
+        
+        # Initialize pool
+        self._initialize_pool()
+        logger.info(f"Initialized pool with size: {self._current_pool_size}")
 
-    def _create_pool(self, size):
-        self._pool = SimpleConnectionPool(
-            min_connections=size,
-            max_connections=size,
-            connection_kwargs={
-                'user': property_values["snowflake.user"],
-                'password': property_values["snowflake.password"],
-                'account': property_values["snowflake.account"],
-                'warehouse': property_values["snowflake.warehouse"],
-                'database': property_values["snowflake.database"],
-                'schema': property_values["snowflake.schema"]
-            }
+    def _create_connection(self):
+        return snowflake.connector.connect(
+            user=property_values["snowflake.user"],
+            password=property_values["snowflake.password"],
+            account=property_values["snowflake.account"],
+            warehouse=property_values["snowflake.warehouse"],
+            database=property_values["snowflake.database"],
+            schema=property_values["snowflake.schema"]
         )
-        self._current_pool_size = size
 
-    def _check_and_scale(self):
-        # Only scale up if we have no free connections
-        if len(self._free_connections) == 0:
-            utilization = self._active_connections / self._current_pool_size
-            
-            # Scale up logic
-            if utilization >= self._scale_up_threshold and self._current_pool_size < self._max_pool_size:
-                new_size = min(
-                    self._current_pool_size * 2,
-                    self._max_pool_size
-                )
-                logger.info(f"No free connections available. Scaling up pool from {self._current_pool_size} to {new_size}")
-                self._recreate_pool(new_size)
-                
-            # Scale down logic
-            elif utilization <= self._scale_down_threshold and self._current_pool_size > self._min_pool_size:
-                new_size = max(
-                    self._current_pool_size // 2,
-                    self._min_pool_size
-                )
-                logger.info(f"Pool underutilized. Scaling down from {self._current_pool_size} to {new_size}")
-                self._recreate_pool(new_size)
+    def _initialize_pool(self):
+        for _ in range(self._current_pool_size):
+            try:
+                conn = self._create_connection()
+                self._free_connections.put(conn)
+            except Exception as e:
+                logger.error(f"Error creating initial connection: {str(e)}")
 
-    def _recreate_pool(self, new_size):
-        old_pool = self._pool
-        self._create_pool(new_size)
+    def _is_connection_valid(self, connection):
         try:
-            old_pool.close_all_connections()
+            # Quick validation query
+            connection.cursor().execute("SELECT 1")
+            return True
         except:
-            pass
-        self._free_connections.clear()
+            return False
 
     def get_connection(self):
         start_time = datetime.now()
+        wait_count = 0  # Track how many times we've waited for a free connection
         
         while True:
+            # PRIORITY 1: Try to get a free connection
             try:
-                # First priority: Check for free connections
-                if self._free_connections:
-                    connection = self._free_connections.pop()
-                    try:
-                        # Test if connection is still valid
-                        connection.cursor().execute("SELECT 1")
-                        self._active_connections += 1
-                        logger.info(f"Reused free connection. Active: {self._active_connections}/{self._current_pool_size}")
-                        return connection
-                    except:
-                        # If connection is invalid, continue to get new connection
-                        pass
+                connection = self._free_connections.get_nowait()
+                if self._is_connection_valid(connection):
+                    conn_id = str(id(connection))
+                    self._active_connections[conn_id] = connection
+                    logger.info(f"Retrieved free connection. Active: {len(self._active_connections)}, Free: {self._free_connections.qsize()}")
+                    return connection
+            except queue.Empty:
+                pass  # No free connections available
 
-                if self._active_connections >= self._current_pool_size:
-                    wait_time = (datetime.now() - start_time).total_seconds()
-                    if wait_time >= self.connection_timeout:
-                        raise PoolTimeoutError(f"Timeout after {wait_time} seconds")
-                    
-                    # Check scaling only if no free connections
-                    if not self._free_connections:
-                        self._check_and_scale()
-                    time.sleep(1)
-                    continue
-                
-                connection = self._pool.get_connection()
-                self._active_connections += 1
-                logger.info(f"New connection acquired. Active: {self._active_connections}/{self._current_pool_size}")
-                return connection
-                
-            except PoolTimeoutError:
-                raise
-            except Exception as e:
-                wait_time = (datetime.now() - start_time).total_seconds()
-                if wait_time >= self.connection_timeout:
-                    raise PoolTimeoutError(f"Failed to get connection after {self.connection_timeout} seconds")
-                time.sleep(1)
+            # PRIORITY 2: Create new connection if within current pool size
+            if len(self._active_connections) < self._current_pool_size:
+                try:
+                    connection = self._create_connection()
+                    conn_id = str(id(connection))
+                    self._active_connections[conn_id] = connection
+                    logger.info(f"Created new connection within pool limit. Active: {len(self._active_connections)}")
+                    return connection
+                except Exception as e:
+                    logger.error(f"Error creating new connection: {str(e)}")
+
+            # PRIORITY 3: If waiting too long, consider scaling up
+            wait_time = (datetime.now() - start_time).total_seconds()
+            if wait_time >= 5:  # Wait 5 seconds before considering scale up
+                if self._current_pool_size < self._max_pool_size:
+                    new_size = min(self._current_pool_size + 2, self._max_pool_size)  # Increment by 2
+                    logger.info(f"Scaling up pool from {self._current_pool_size} to {new_size}")
+                    self._current_pool_size = new_size
+                    try:
+                        connection = self._create_connection()
+                        conn_id = str(id(connection))
+                        self._active_connections[conn_id] = connection
+                        return connection
+                    except Exception as e:
+                        logger.error(f"Error creating connection during scale up: {str(e)}")
+
+            # Check timeout
+            if wait_time >= self.connection_timeout:
+                raise PoolTimeoutError(f"Could not get connection after {self.connection_timeout} seconds")
+
+            time.sleep(1)
+            wait_count += 1
 
     def release_connection(self, connection):
         try:
-            # Add to free connections pool instead of immediate release
-            self._free_connections.add(connection)
-            self._active_connections -= 1
-            logger.info(f"Connection released to free pool. Active: {self._active_connections}/{self._current_pool_size}, Free: {len(self._free_connections)}")
-            
-            # Only check scaling if we have too many free connections
-            if len(self._free_connections) > self._current_pool_size // 2:
-                self._check_and_scale()
+            conn_id = str(id(connection))
+            if conn_id in self._active_connections:
+                del self._active_connections[conn_id]
+                
+                # Only reuse valid connections
+                if self._is_connection_valid(connection):
+                    self._free_connections.put(connection)
+                    logger.info(f"Released valid connection to pool. Active: {len(self._active_connections)}, Free: {self._free_connections.qsize()}")
+                else:
+                    try:
+                        connection.close()
+                    except:
+                        pass
+                    logger.info("Closed invalid connection")
+
         except Exception as e:
             logger.error(f"Error releasing connection: {str(e)}")
             try:
-                self._pool.release_connection(connection)
+                connection.close()
             except:
                 pass
 
     def close_all(self):
-        self._free_connections.clear()
-        self._pool.close_all_connections()
-        self._active_connections = 0
+        # Close active connections
+        for conn in self._active_connections.values():
+            try:
+                conn.close()
+            except:
+                pass
+        self._active_connections.clear()
+        
+        # Close free connections
+        while True:
+            try:
+                conn = self._free_connections.get_nowait()
+                try:
+                    conn.close()
+                except:
+                    pass
+            except queue.Empty:
+                break
+                
         logger.info("All connections closed")
 
 @st.cache_resource
@@ -157,8 +165,6 @@ def get_connection_manager():
         initial_pool_size=5,
         min_pool_size=3,
         max_pool_size=50,
-        scale_up_threshold=0.8,
-        scale_down_threshold=0.3,
         connection_timeout=30
     )
 
@@ -194,15 +200,6 @@ def get_data_sf(query, timeout=50000):
     
     return result_container
 
-# Cleanup function for Streamlit shutdown
-def cleanup():
-    try:
-        conn_manager = get_connection_manager()
-        conn_manager.close_all()
-        logger.info("Cleanup completed")
-    except Exception as e:
-        logger.error(f"Error during cleanup: {str(e)}")
-
 # Register cleanup handler
 if 'on_close' not in st.session_state:
-    st.session_state.on_close = cleanup
+    st.session_state.on_close = lambda: get_connection_manager().close_all()
