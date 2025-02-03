@@ -1,9 +1,8 @@
 import streamlit as st
 import pandas as pd
-import logging
 from datetime import datetime
 import time
-from typing import List, Dict, Tuple
+import logging
 from transformers import AutoModelForSequenceClassification, AutoTokenizer
 import torch
 import os
@@ -12,165 +11,239 @@ import os
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('ddl_analyzer.log'),
-        logging.StreamHandler()
-    ]
+    handlers=[logging.FileHandler('ddl_analyzer.log'), logging.StreamHandler()]
 )
 logger = logging.getLogger(__name__)
 
 # Constants
 FEEDBACK_FILE = 'user_feedback.csv'
+SENSITIVITY_OPTIONS = [
+    "Sensitive PII",
+    "Non-sensitive PII",
+    "Confidential Information",
+    "Licensed Data"
+]
 
-def load_existing_feedback():
+# Initialize session state
+if 'initialized' not in st.session_state:
+    st.session_state.initialized = True
+    st.session_state.current_schema = None
+    st.session_state.current_object_type = None
+    st.session_state.current_object = None
+    st.session_state.analysis_df = None
+    st.session_state.editing_enabled = False
+    st.session_state.edited_cells = {}
+    st.session_state.analysis_complete = False
+
+@st.cache_resource
+def get_model_and_tokenizer():
+    """Loads and caches the model and tokenizer globally"""
+    logger.info("Loading model and tokenizer")
+    MODEL_ID = "/data/ntracedevpkg/dev/scripts/nhancebot/flant5_sensitivity/AutoModelForSequenceClassification/flant5"
+    model = AutoModelForSequenceClassification.from_pretrained(MODEL_ID)
+    model.to("cuda" if torch.cuda.is_available() else "cpu")
+    tokenizer = AutoTokenizer.from_pretrained(MODEL_ID)
+    return model, tokenizer
+
+def create_classification_prompt(column_name: str, explanation: str) -> str:
+    """Create a prompt with reasoning for classification."""
+    return (
+        f"Classify this data attribute into one of these categories:\n"
+        f"- Sensitive PII: user data that if made public can harm user through fraud or theft\n"
+        f"- Non-sensitive PII: user data that can be safely made public without harm\n"
+        f"- Non-person data: internal company data not related to personal information\n\n"
+        f"Attribute Name: {column_name}\n"
+        f"Description: {explanation}\n"
+        f"Consider the privacy impact and potential for misuse. Classify this as:"
+    )
+
+def classify_sensitivity(texts_to_classify: List[str]) -> List[str]:
+    """Function to classify a list of texts using the model in batch"""
+    logger.info(f"Classifying {len(texts_to_classify)} columns for sensitivity")
+    model, tokenizer = get_model_and_tokenizer()
+    
+    inputs = tokenizer(
+        texts_to_classify,
+        return_tensors="pt",
+        max_length=512,
+        truncation=True,
+        padding=True,
+    )
+    inputs = inputs.to("cuda" if torch.cuda.is_available() else "cpu")
+
+    with torch.no_grad():
+        outputs = model(**inputs)
+    
+    logits = outputs.logits
+    probs = torch.nn.functional.softmax(logits, dim=-1)
+    confidences, predicted_classes = torch.max(probs, dim=1)
+    
+    predicted_classes = predicted_classes.cpu().numpy()
+    
+    id2label = {0: "Sensitive PII", 1: "Non-sensitive PII", 2: "Non-person data"}
+    predicted_labels = [id2label[class_id] for class_id in predicted_classes]
+    
+    return predicted_labels
+
+def load_existing_feedback(schema, table):
     """Load existing feedback from CSV file"""
     if os.path.exists(FEEDBACK_FILE):
-        return pd.read_csv(FEEDBACK_FILE)
-    return pd.DataFrame(columns=['schema', 'table', 'column_name', 'explanation', 'sensitivity', 'timestamp'])
+        df = pd.read_csv(FEEDBACK_FILE)
+        filtered = df[(df['schema'] == schema) & (df['table'] == table)]
+        if not filtered.empty:
+            return pd.DataFrame({
+                'Column Name': filtered['column_name'],
+                'Explanation': filtered['explanation'],
+                'Data Sensitivity': filtered['sensitivity']
+            })
+    return None
 
-def save_feedback(schema: str, table: str, feedback_df: pd.DataFrame):
+def save_feedback(schema, table, feedback_df):
     """Save or update feedback in CSV file"""
-    existing_df = load_existing_feedback()
-    
-    # Create new feedback records
+    now = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
     new_records = []
+    
     for _, row in feedback_df.iterrows():
-        new_record = {
+        new_records.append({
             'schema': schema,
             'table': table,
             'column_name': row['Column Name'],
             'explanation': row['Explanation'],
             'sensitivity': row['Data Sensitivity'],
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }
-        new_records.append(new_record)
+            'timestamp': now
+        })
     
-    # Remove existing entries for this schema/table combination
-    existing_df = existing_df[~((existing_df['schema'] == schema) & 
-                              (existing_df['table'] == table))]
+    new_df = pd.DataFrame(new_records)
     
-    # Append new records
-    updated_df = pd.concat([existing_df, pd.DataFrame(new_records)], ignore_index=True)
+    if os.path.exists(FEEDBACK_FILE):
+        existing_df = pd.read_csv(FEEDBACK_FILE)
+        # Remove old entries for this schema/table
+        existing_df = existing_df[~((existing_df['schema'] == schema) & 
+                                  (existing_df['table'] == table))]
+        # Append new records
+        updated_df = pd.concat([existing_df, new_df], ignore_index=True)
+    else:
+        updated_df = new_df
+    
     updated_df.to_csv(FEEDBACK_FILE, index=False)
 
-def get_existing_analysis(schema: str, table: str):
-    """Get existing analysis for a schema/table combination"""
-    if os.path.exists(FEEDBACK_FILE):
-        feedback_df = pd.read_csv(FEEDBACK_FILE)
-        filtered_df = feedback_df[
-            (feedback_df['schema'] == schema) & 
-            (feedback_df['table'] == table)
-        ]
-        if not filtered_df.empty:
-            return pd.DataFrame({
-                'Column Name': filtered_df['column_name'],
-                'Explanation': filtered_df['explanation'],
-                'Data Sensitivity': filtered_df['sensitivity']
-            })
-    return None
+def create_editable_cell(row_idx, col_name, value, cell_type="text"):
+    """Create an editable cell with its own key and state management"""
+    key = f"cell_{row_idx}_{col_name}"
+    
+    if key not in st.session_state:
+        st.session_state[key] = value
+    
+    if cell_type == "select":
+        new_value = st.selectbox(
+            "",
+            options=SENSITIVITY_OPTIONS,
+            key=key,
+            label_visibility="collapsed"
+        )
+    else:
+        new_value = st.text_area(
+            "",
+            value=st.session_state[key],
+            key=key,
+            label_visibility="collapsed",
+            height=50
+        )
+    
+    if new_value != st.session_state[key]:
+        st.session_state[key] = new_value
+        st.session_state.edited_cells[(row_idx, col_name)] = new_value
+    
+    return new_value
 
-[Previous model and tokenizer functions remain the same...]
+def display_editable_table():
+    """Display the analysis results in an editable table format"""
+    if st.session_state.analysis_df is None:
+        return
 
-# Initialize session state variables at the start of the app
-def init_session_state():
-    if 'initialized' not in st.session_state:
-        st.session_state.initialized = True
-        st.session_state.analysis_complete = False
-        st.session_state.current_selections = {
-            'schema': None,
-            'object_type': None,
-            'object': None
-        }
-        st.session_state.analysis_results = None
-        st.session_state.editing_data = None
-        st.session_state.last_edited = None
-
-def has_selection_changed(schema, obj_type, obj):
-    if not all(v is not None for v in st.session_state.current_selections.values()):
-        return True
-    return (st.session_state.current_selections['schema'] != schema or
-            st.session_state.current_selections['object_type'] != obj_type or
-            st.session_state.current_selections['object'] != obj)
-
-def update_selection_state(schema, obj_type, obj):
-    if has_selection_changed(schema, obj_type, obj):
-        st.session_state.current_selections = {
-            'schema': schema,
-            'object_type': obj_type,
-            'object': obj
-        }
-        st.session_state.analysis_complete = False
-        st.session_state.analysis_results = None
-        st.session_state.editing_data = None
-        st.session_state.last_edited = None
-        return True
-    return False
+    df = st.session_state.analysis_df
+    
+    # Create columns for the table header
+    cols = st.columns([2, 4, 2])
+    headers = ["Column Name", "Explanation", "Data Sensitivity"]
+    for col, header in zip(cols, headers):
+        col.markdown(f"**{header}**")
+    
+    # Display each row with editable cells
+    for idx, row in df.iterrows():
+        cols = st.columns([2, 4, 2])
+        
+        # Column Name (non-editable)
+        cols[0].text(row['Column Name'])
+        
+        # Explanation (editable)
+        with cols[1]:
+            explanation = create_editable_cell(idx, 'Explanation', row['Explanation'])
+        
+        # Data Sensitivity (editable dropdown)
+        with cols[2]:
+            sensitivity = create_editable_cell(
+                idx, 
+                'Data Sensitivity', 
+                row['Data Sensitivity'],
+                cell_type="select"
+            )
+        
+        # Update the dataframe if changes were made
+        if st.session_state.edited_cells:
+            if (idx, 'Explanation') in st.session_state.edited_cells:
+                df.at[idx, 'Explanation'] = st.session_state.edited_cells[(idx, 'Explanation')]
+            if (idx, 'Data Sensitivity') in st.session_state.edited_cells:
+                df.at[idx, 'Data Sensitivity'] = st.session_state.edited_cells[(idx, 'Data Sensitivity')]
+    
+    st.session_state.analysis_df = df
 
 def main():
-    init_session_state()
+    st.set_page_config(page_title="DDL Analyzer", page_icon="🔍", layout="wide")
     
-    st.set_page_config(
-        page_title="DDL Analyzer",
-        page_icon="🔍",
-        layout="wide"
-    )
-
-    # Custom CSS
-    st.markdown("""
-        <style>
-        .block-container {
-            padding-top: 2rem;
-            padding-bottom: 2rem;
-        }
-        .stButton button {
-            width: 100%;
-            margin-top: 1rem;
-        }
-        .stProgress > div > div > div > div {
-            background-color: #1f77b4;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
     st.title("🔍 DDL Analyzer")
     st.markdown("Analyze your database objects structure and get intelligent insights.")
 
-    # Initialize session state
-    if 'analysis_complete' not in st.session_state:
-        st.session_state.analysis_complete = False
-    if 'current_selections' not in st.session_state:
-        st.session_state.current_selections = {
-            'schema': None,
-            'object_type': None,
-            'object': None
-        }
-
-    # Function to check if selections have changed
-    def has_selections_changed(schema, obj_type, obj):
-        current = st.session_state.current_selections
-        if (current['schema'] != schema or 
-            current['object_type'] != obj_type or 
-            current['object'] != obj):
-            return True
-        return False
-
-    def update_selections(schema, obj_type, obj):
-        st.session_state.current_selections = {
-            'schema': schema,
-            'object_type': obj_type,
-            'object': obj
-        }
-        # Only reset analysis state when selections change
-        st.session_state.analysis_complete = False
-        if 'df' in st.session_state:
-            del st.session_state.df
-
-    # Sidebar for selections
+    # Sidebar selections
     with st.sidebar:
-        [Previous schema and object selection code remains the same...]
+        st.header("Object Selection")
+        
+        # Get schema list
+        schemas = get_schema_list()  # Your existing function
+        selected_schema = st.selectbox("1. Select Schema", schemas)
+        
+        # Check if schema changed
+        if selected_schema != st.session_state.current_schema:
+            st.session_state.current_schema = selected_schema
+            st.session_state.analysis_complete = False
+            st.session_state.analysis_df = None
+            st.session_state.edited_cells = {}
+        
+        # Object type selection
+        object_type = st.radio("2. Select Object Type", ["TABLE", "VIEW"])
+        
+        # Check if object type changed
+        if object_type != st.session_state.current_object_type:
+            st.session_state.current_object_type = object_type
+            st.session_state.analysis_complete = False
+            st.session_state.analysis_df = None
+            st.session_state.edited_cells = {}
+        
+        # Get objects for selected schema
+        schema_objects = get_schema_objects(selected_schema)  # Your existing function
+        object_list = schema_objects["tables"] if object_type == "TABLE" else schema_objects["views"]
+        
+        selected_object = st.selectbox(f"3. Select {object_type}", object_list)
+        
+        # Check if object changed
+        if selected_object != st.session_state.current_object:
+            st.session_state.current_object = selected_object
+            st.session_state.analysis_complete = False
+            st.session_state.analysis_df = None
+            st.session_state.edited_cells = {}
 
     # Main content area
-    if 'selected_schema' in locals() and 'selected_object' in locals() and selected_object:
+    if all([selected_schema, object_type, selected_object]):
         try:
             # Get DDL and samples
             ddl, samples = get_ddl_and_samples(selected_schema, selected_object, object_type)
@@ -184,129 +257,76 @@ def main():
                     for column, values in samples.items():
                         st.write(f"**{column}**: {', '.join(str(v) for v in values)}")
             
-            # Check for existing analysis
-            existing_analysis = get_existing_analysis(selected_schema, selected_object)
+            # Analysis section
+            if not st.session_state.analysis_complete:
+                if st.button("🔍 Analyze Structure"):
+                    with st.spinner("Analyzing structure and predicting sensitivity..."):
+                        # Check for existing analysis first
+                        existing_analysis = load_existing_feedback(selected_schema, selected_object)
+                        
+                        if existing_analysis is not None:
+                            st.session_state.analysis_df = existing_analysis
+                        else:
+                            # Generate prompt for analysis
+                            prompt = f"""Analyze this DDL statement and provide an explanation for each column:
+                            {ddl}
+                            For each column, provide a clear, concise explanation of what the column represents.
+                            Format as JSON: {{"column_name": "explanation of what this column represents"}}"""
+
+                            # Get analysis
+                            analysis = eval(get_llm_response(prompt))
+                            
+                            # Create classification prompts
+                            classification_prompts = [
+                                create_classification_prompt(col, explanation) 
+                                for col, explanation in analysis.items()
+                            ]
+                            
+                            # Get sensitivity predictions
+                            sensitivity_predictions = classify_sensitivity(classification_prompts)
+                            
+                            # Transform predictions
+                            transformed_predictions = [
+                                "Confidential Information" if pred == "Non-person data" else pred 
+                                for pred in sensitivity_predictions
+                            ]
+                            
+                            # Prepare results data
+                            results_data = [
+                                {
+                                    "Column Name": col,
+                                    "Explanation": explanation,
+                                    "Data Sensitivity": sensitivity
+                                }
+                                for (col, explanation), sensitivity in zip(analysis.items(), transformed_predictions)
+                            ]
+                            
+                            st.session_state.analysis_df = pd.DataFrame(results_data)
+                        
+                        st.session_state.analysis_complete = True
             
-            # Analyze button
-            if not st.session_state.analysis_complete and st.button("🔍 Analyze Structure"):
-                with st.spinner("Analyzing structure and predicting sensitivity..."):
-                    if existing_analysis is not None:
-                        st.session_state.analysis_results = existing_analysis
-                    else:
-                        # Generate prompt for analysis
-                        prompt = f"""Analyze this DDL statement and provide an explanation for each column:
-                        {ddl}
-                        For each column, provide a clear, concise explanation of what the column represents.
-                        Format as JSON: {{"column_name": "explanation of what this column represents"}}"""
-
-                        # Get analysis
-                        analysis = eval(get_llm_response(prompt))
-                        
-                        # Create classification prompts
-                        classification_prompts = [
-                            create_classification_prompt(col, explanation) 
-                            for col, explanation in analysis.items()
-                        ]
-                        
-                        # Get sensitivity predictions
-                        sensitivity_predictions = classify_sensitivity(classification_prompts)
-                        
-                        # Transform predictions
-                        transformed_predictions = [
-                            "Confidential Information" if pred == "Non-person data" else pred 
-                            for pred in sensitivity_predictions
-                        ]
-                        
-                        # Prepare results data
-                        results_data = [
-                            {
-                                "Column Name": col,
-                                "Explanation": explanation,
-                                "Data Sensitivity": sensitivity
-                            }
-                            for (col, explanation), sensitivity in zip(analysis.items(), transformed_predictions)
-                        ]
-                        
-                        st.session_state.analysis_results = pd.DataFrame(results_data)
-                    
-                    st.session_state.analysis_complete = True
-
-            # Show results if analysis is complete
+            # Display results and enable editing
             if st.session_state.analysis_complete:
                 st.subheader("📊 Analysis Results")
                 
-                # Predefined sensitivity options
-                SENSITIVITY_OPTIONS = [
-                    "Sensitive PII",
-                    "Non-sensitive PII",
-                    "Confidential Information",
-                    "Licensed Data"
-                ]
-
-                if st.session_state.editing_data is None:
-                    st.session_state.editing_data = st.session_state.analysis_results.copy()
-
-                # Create the data editor with a key based on current state
-                editor_key = f"editor_{st.session_state.current_selections['schema']}_{st.session_state.current_selections['object']}"
+                # Display editable table
+                display_editable_table()
                 
-                # Create an editable dataframe
-                edited_df = st.data_editor(
-                    st.session_state.editing_data,
-                    use_container_width=True,
-                    column_config={
-                        "Column Name": st.column_config.TextColumn(
-                            "Column Name",
-                            width="medium",
-                            required=True,
-                            disabled=True
-                        ),
-                        "Explanation": st.column_config.TextColumn(
-                            "Explanation",
-                            width="large"
-                        ),
-                        "Data Sensitivity": st.column_config.SelectboxColumn(
-                            "Data Sensitivity",
-                            width="medium",
-                            help="Data sensitivity classification",
-                            options=SENSITIVITY_OPTIONS,
-                            required=True
-                        )
-                    },
-                    disabled=False,
-                    hide_index=True,
-                    key=editor_key
-                )
-                
-                # Update editing data only if it has changed
-                if not edited_df.equals(st.session_state.editing_data):
-                    st.session_state.editing_data = edited_df.copy()
-                    st.session_state.last_edited = datetime.now()
-                
-                # Execute button for saving feedback
+                # Execute button
                 if st.button("▶️ Execute"):
                     save_feedback(
-                        st.session_state.current_selections['schema'],
-                        st.session_state.current_selections['object'],
-                        st.session_state.editing_data
+                        selected_schema,
+                        selected_object,
+                        st.session_state.analysis_df
                     )
                     st.success("✅ Feedback saved successfully!")
                     st.balloons()
                 
-                # Add visualization of sensitivity distribution
+                # Display distribution chart
                 st.subheader("Data Sensitivity Distribution")
-                sensitivity_counts = st.session_state.editing_data["Data Sensitivity"].value_counts()
-                st.bar_chart(sensitivity_counts)
-                
-                # Execute button for saving feedback
-                if st.button("▶️ Execute"):
-                    save_feedback(selected_schema, selected_object, st.session_state.editor_data)
-                    st.success("✅ Feedback saved successfully!")
-                    st.balloons()
-                
-                # Add visualization of sensitivity distribution
-                st.subheader("Data Sensitivity Distribution")
-                sensitivity_counts = st.session_state.editor_data["Data Sensitivity"].value_counts()
-                st.bar_chart(sensitivity_counts)
+                if st.session_state.analysis_df is not None:
+                    sensitivity_counts = st.session_state.analysis_df["Data Sensitivity"].value_counts()
+                    st.bar_chart(sensitivity_counts)
 
         except Exception as e:
             st.error("Error analyzing DDL. Please try again.")
