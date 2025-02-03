@@ -30,28 +30,51 @@ def load_existing_feedback():
 
 def save_feedback(schema: str, table: str, feedback_df: pd.DataFrame):
     """Save or update feedback in CSV file"""
-    existing_df = load_existing_feedback()
-    
-    # Create new feedback records
-    new_records = []
-    for _, row in feedback_df.iterrows():
-        new_record = {
-            'schema': schema,
-            'table': table,
-            'column_name': row['Column Name'],
-            'explanation': row['Explanation'],
-            'sensitivity': row['Data Sensitivity'],
-            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
-        }
-        new_records.append(new_record)
-    
-    # Remove existing entries for this schema/table combination
-    existing_df = existing_df[~((existing_df['schema'] == schema) & 
-                              (existing_df['table'] == table))]
-    
-    # Append new records
-    updated_df = pd.concat([existing_df, pd.DataFrame(new_records)], ignore_index=True)
-    updated_df.to_csv(FEEDBACK_FILE, index=False)
+    try:
+        # Load existing feedback
+        if os.path.exists(FEEDBACK_FILE):
+            existing_df = pd.read_csv(FEEDBACK_FILE)
+        else:
+            existing_df = pd.DataFrame(columns=['schema', 'table', 'column_name', 'explanation', 'sensitivity', 'timestamp', 'last_updated'])
+
+        # Get current timestamp
+        current_time = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        
+        # Create new records from the edited data
+        new_records = []
+        for _, row in feedback_df.iterrows():
+            new_record = {
+                'schema': schema,
+                'table': table,
+                'column_name': row['Column Name'],
+                'explanation': row['Explanation'],
+                'sensitivity': row['Data Sensitivity'],
+                'timestamp': current_time,
+                'last_updated': current_time
+            }
+            new_records.append(new_record)
+            
+        # Remove existing entries for this schema/table combination
+        mask = ~((existing_df['schema'] == schema) & (existing_df['table'] == table))
+        filtered_df = existing_df[mask].copy()
+        
+        # Create DataFrame with new records
+        new_records_df = pd.DataFrame(new_records)
+        
+        # Combine existing (filtered) records with new records
+        final_df = pd.concat([filtered_df, new_records_df], ignore_index=True)
+        
+        # Sort by timestamp to maintain order
+        final_df = final_df.sort_values(['timestamp', 'schema', 'table', 'column_name'])
+        
+        # Save to CSV
+        final_df.to_csv(FEEDBACK_FILE, index=False)
+        logger.info(f"Successfully saved feedback for {schema}.{table}")
+        
+        return True
+    except Exception as e:
+        logger.error(f"Error saving feedback: {str(e)}")
+        return False
 
 def get_existing_analysis(schema: str, table: str):
     """Get existing analysis for a schema/table combination"""
@@ -243,9 +266,11 @@ def main():
                 
                 # Execute button for saving feedback
                 if st.button("▶️ Execute"):
-                    save_feedback(selected_schema, selected_object, st.session_state.editor_data)
-                    st.success("✅ Feedback saved successfully!")
-                    st.balloons()
+                    if save_feedback(selected_schema, selected_object, st.session_state.editor_data):
+                        st.success(f"✅ Successfully saved feedback for {selected_schema}.{selected_object}")
+                        st.balloons()
+                    else:
+                        st.error("Failed to save feedback. Please check the logs.")
                 
                 # Add visualization of sensitivity distribution
                 st.subheader("Data Sensitivity Distribution")
