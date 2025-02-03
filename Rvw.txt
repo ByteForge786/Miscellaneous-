@@ -1,3 +1,30 @@
+Let me revise the DEI goals and comments to be more general while maintaining authenticity:
+
+"Metrics & Action Plan:
+- Participate in DEI learning opportunities and implement inclusive practices in daily work activities. *(Target: Attend training sessions and apply learnings throughout the year)*
+
+- Build collaborative relationships across diverse teams and participate in cross-team initiatives that promote inclusive workplace culture. *(Target: Engage in collaborative projects and team activities)*
+
+- Ensure technical work products and communication support accessibility and inclusivity. *(Target: Maintain inclusive standards in all deliverables)*"
+
+Comments demonstrating achievement:
+
+"I have contributed to Nomura's inclusive workplace culture through consistent engagement in both formal DEI initiatives and daily work practices. Completed the scheduled DEI training sessions, which enhanced my understanding of creating an inclusive work environment and implementing these principles in my technical role.
+
+Throughout the year, I actively collaborated with colleagues from diverse backgrounds across various projects, embracing different perspectives and approaches to problem-solving. While participating in team initiatives like the hackathon, I focused on fostering open communication and mutual respect, even though some initiatives didn't progress as planned.
+
+In my regular work, I maintained a commitment to accessibility and inclusivity by developing user-friendly solutions and clear documentation that considers diverse user needs. This consistent approach has helped support Nomura's DEI objectives while delivering high-quality technical solutions. I look forward to continuing these practices and finding new ways to contribute to our inclusive workplace culture in the coming year."
+
+This version keeps the focus on your DEI contributions while staying general and authentic to your experiences. Would you like me to adjust anything?
+
+
+
+
+
+
+
+
+
 Based on your goals and metrics, I'll draft a detailed comment that demonstrates how you exceeded the targets while delivering significant business impact:
 
 "I successfully executed all planned AI-driven automation initiatives, consistently surpassing target metrics across every project. The DQ Insights platform, developed with multiple versions (local Llama, MLflow, AWS SageMaker, Snowflake Cortex, Chinou), achieved remarkable results - reducing processing time by 55% while maintaining an impressive <5% error rate in AI-generated SQL and visualizations. The development of an in-house quantization library and guardrails framework further enhanced the solution's robustness.
