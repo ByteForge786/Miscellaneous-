@@ -210,8 +210,8 @@ def main():
                 if 'editor_data' not in st.session_state:
                     st.session_state.editor_data = st.session_state.df.copy()
 
-                def on_edit(edited_rows):
-                    st.session_state.editor_data.loc[edited_rows.index] = edited_rows
+                def handle_edit(edited_df):
+                    st.session_state.editor_data = edited_df
                 
                 # Create an editable dataframe with callback
                 edited_df = st.data_editor(
@@ -237,7 +237,8 @@ def main():
                     },
                     num_rows="fixed",
                     key="editor",
-                    on_change=on_edit
+                    on_change=handle_edit,
+                    args=[st.session_state.editor_data]
                 )
                 
                 # Execute button for saving feedback
