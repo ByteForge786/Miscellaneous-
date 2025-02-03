@@ -1,3 +1,73 @@
+### **Key Achievements - Year-End Review**  
+
+This year has been marked by several groundbreaking contributions, spanning AI-driven automation, large language models, data quality insights, cost optimization, and machine learning pipelines. Below are my key achievements:  
+
+#### **1. Developed an End-to-End Text-to-SQL & Graph Generation LLM Application**  
+- Built a **DQ Insights** application that allows users to convert natural language queries into SQL and visualize insights using **Streamlit & Python**.  
+- Designed a full-stack solution, integrating **frontend, backend, LLM processing, and visualization** into a seamless, user-friendly experience.  
+
+#### **2. Built an In-House LLM Library & Infrastructure**  
+- **Quantized and optimized the LLaMA model** to run on the internal **NPC** infrastructure. This was a challenging task that took 6 months to crack.  
+- Wrote a **guardrails library** to ensure safe and reliable LLM responses.  
+- Developed an **evaluation framework** for assessing LLM outputs, improving the quality and accuracy of AI-driven applications.  
+- Created a **custom vector database from scratch**, optimizing search and retrieval for AI-based applications.  
+
+#### **3. Engineered a Rule-Based SQL Classification Model**  
+- Gathered and prepared **training data** for rule-based SQL classification.  
+- Trained and fine-tuned an ML model to automate SQL classification, improving efficiency in query analysis.  
+
+#### **4. Designed an AI-Driven Data Lineage System**  
+- Developed a **state-of-the-art AI-based data lineage solution** using **XGBoost and Sentence Transformers** to automate the lineage process.  
+- This was one of the most complex projects, as no existing solutions outside the organization provided a similar level of automation.  
+
+#### **5. Led Multiple Versions of DQ Insights Across Different Infrastructures**  
+- Integrated LLM-based DQ Insights with multiple backends, ensuring scalability and adaptability:  
+  - **Local LLaMA model** (optimized and quantized).  
+  - **MLflow-based version** for model tracking and deployment.  
+  - **AWS SageMaker-powered implementation** for cloud scalability.  
+  - **Snowflake Cortex-based integration** for efficient processing.  
+  - **Chinou-based version** for alternative deployment.  
+- Developed a **pluggable architecture** to allow smooth transitions between different LLM models and infrastructures.  
+
+#### **6. Built a Cost Optimization Chatbot for Snowflake**  
+- Designed and implemented an **LLM-powered chatbot** that provides **cost optimization recommendations** based on Snowflake query history and usage patterns.  
+
+#### **7. Created an End-to-End Sensitivity Classification Pipeline**  
+- Trained and fine-tuned a **machine learning model** for sensitivity classification.  
+- Built a **fully automated pipeline** for classifying data sensitivity.  
+- Integrated **Chinou-based description auto-fill** to streamline metadata enrichment.  
+
+#### **8. Industry & Concept Classification (Ongoing)**  
+- Working on **industry classification models** to categorize data effectively.  
+- Upcoming work on **concept classification**, expanding AI-driven automation capabilities.  
+
+#### **9. Delivered 10+ High-Impact Projects - End to End**  
+- Took ownership of **10 major AI & ML projects**, developing everything **from scratch to production deployment**.  
+- Ensured **full lifecycle management**, including:  
+  - Solution architecture  
+  - Backend & frontend development  
+  - Model training & fine-tuning  
+  - Deployment & monitoring  
+  - User feedback integration  
+
+#### **10. Single-Handedly Built Scalable, Production-Grade Code**  
+- Wrote **1,03,999+ lines of code**, ensuring efficiency, scalability, and reusability.  
+- Delivered projects in **record time**, completing most **within 3-4 days**—covering **architecture, development, deployment, and user integration**.  
+- Made websites **live on EOS**, handling everything from **login authentication** to **user feedback loops**.  
+
+#### **11. Ad-Hoc & Quick Turnaround Projects**  
+- Delivered **quality projects within 2-4 days**, solving critical business problems under tight deadlines.  
+- Debugged and resolved **complex errors** swiftly, ensuring project completion before deadlines.  
+- Built **pluggable, modular code** to allow easy adaptability for future improvements.  
+
+### **Conclusion**  
+Throughout the year, I have played a pivotal role in driving AI-powered automation, optimizing LLM-based applications, and ensuring scalability in multiple domains, from SQL classification to data lineage and cost optimization. All projects were delivered **single-handedly**, demonstrating end-to-end expertise in **AI, ML, LLMs, SQL automation, and cloud infrastructure**.  
+
+Would you like me to refine this further or emphasize any specific points?
+
+
+
+
 Here’s a concise version within the **1251-character limit**:  
 
 ---
