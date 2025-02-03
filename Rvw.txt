@@ -1,3 +1,32 @@
+
+You're right - let me revise by addressing all the key areas shown in the image: Ethics, Risk Management (Challenge, Escalate, Respect), Compliance, and Conduct. Let me set comprehensive goals and provide comments based on your year's work:
+
+"Metrics & Action Plan:
+- Demonstrate Nomura's Corporate Philosophy by ensuring all project deliverables maintain highest quality standards and transparency in development processes. *(Target: Document and implement best practices across all projects)*
+
+- Implement Risk Culture Principles by establishing clear escalation paths for technical challenges, actively participating in problem-solving discussions, and maintaining respectful collaboration across teams. *(Target: Regular risk assessments and proactive issue resolution)*
+
+- Ensure comprehensive compliance with all organizational policies, data governance standards, and development protocols in project delivery. *(Target: 100% adherence to compliance requirements and zero policy violations)*"
+
+Comments demonstrating achievement:
+
+"I have consistently demonstrated commitment to Nomura's ethical principles and corporate philosophy throughout the year. All projects were delivered with thorough documentation, transparent development processes, and adherence to professional standards. My work on multiple critical projects showcased dedication to quality and reliability while maintaining the highest ethical standards.
+
+Regarding Risk Culture Principles, I actively practiced all three components:
+- Challenge: Consistently provided constructive feedback during project developments, suggesting improvements and questioning processes to ensure optimal solutions
+- Escalate: Maintained clear communication channels for technical challenges, promptly escalating potential issues in development cycles and collaborating with senior team members when needed
+- Respect: Fostered inclusive technical discussions where all team members could share their perspectives, particularly during cross-team collaborations and project implementations
+
+In terms of compliance and conduct, I maintained strict adherence to all organizational policies and regulations. Every project followed proper approval processes, included comprehensive documentation, and implemented necessary security measures. My development of modular, well-documented code demonstrates commitment to maintaining transparent, compliant solutions.
+
+Throughout my work on various projects, I consistently prioritized proper conduct by ensuring all deliverables met not just technical requirements but also aligned with Nomura's professional standards. This included maintaining detailed project documentation, following established development protocols, and ensuring all solutions were developed and implemented in accordance with organizational policies and industry best practices."
+
+Would you like me to expand on any particular aspect of these areas?
+
+
+
+
+
 Let me revise the DEI goals and comments to be more general while maintaining authenticity:
 
 "Metrics & Action Plan:
