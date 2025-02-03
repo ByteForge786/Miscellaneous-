@@ -1,70 +1,42 @@
-import chainlit as cl
-# ... [previous imports remain the same]
-
-@cl.on_message
-async def handle_selections(message: cl.Message):
-    """Handle all selections in a single message handler"""
-    msg = message.content
+def parse_ddl_for_columns(ddl: str) -> List[str]:
+    # Regex to match column definitions
+    # Matches: column_name TYPE(optional_parameters), or column_name TYPE,
+    column_pattern = r'^\s*(\w+)\s+(?:(?:\w+\s*(?:\([^)]+\))?\s*,?)|(?:\w+\s*,?))'
     
-    if msg.startswith("schema:"):
-        schema = msg.replace("schema:", "")
-        state.current_schema = schema
-        state.analysis_complete = False
-        state.analysis_df = None
-        
-        object_type_select = cl.Select(
-            id="object_type",
-            label="Select Object Type",
-            values=["TABLE", "VIEW"]
-        )
-        await object_type_select.send()
-        
-    elif msg.startswith("type:"):
-        obj_type = msg.replace("type:", "")
-        state.current_object_type = obj_type
-        state.analysis_complete = False
-        state.analysis_df = None
-        
-        objects = await get_schema_objects(state.current_schema)
-        object_list = objects["tables"] if obj_type == "TABLE" else objects["views"]
-        
-        object_select = cl.Select(
-            id="object",
-            label=f"Select {obj_type}",
-            values=object_list
-        )
-        await object_select.send()
-        
-    elif msg.startswith("object:"):
-        selected_object = msg.replace("object:", "")
-        state.current_object = selected_object
-        state.analysis_complete = False
-        state.analysis_df = None
-        
-        ddl, samples = await get_ddl_and_samples(
-            state.current_schema, 
-            selected_object, 
-            state.current_object_type
-        )
-        
-        await cl.Message(content=f"```sql\n{ddl}\n```").send()
-        
-        analyze_action = cl.Action(
-            name="analyze_structure",
-            label="🔍 Analyze Structure"
-        )
-        await cl.Message(content="Click to analyze:", actions=[analyze_action]).send()
+    columns = []
+    for line in ddl.split('\n'):
+        # Skip comments, create statement, empty lines and closing bracket
+        if not line.strip() or line.strip().startswith('--') or 'create' in line.lower() or ');' in line:
+            continue
+            
+        match = re.match(column_pattern, line)
+        if match:
+            columns.append(match.group(1))
+            
+    return columns
 
-@cl.on_chat_start
-async def start():
-    schemas = await get_schema_list()
-    schema_elements = [
-        cl.Select(
-            id="schema",
-            label="Select Schema",
-            values=[f"schema:{s}" for s in schemas]
-        )
-    ]
-    await cl.Message(content="Welcome to DDL Analyzer 🔍", elements=schema_elements).send()
-
-# ... [rest of the code remains the same]
+def parse_ddl_tags(ddl: str) -> Dict[str, str]:
+    # Regex to match TAG lines with DATA_SENSITIVITY
+    tag_pattern = r'WITH\s+TAG\s+\([^)]*DATA_SENSITIVITY-\'(\w+)\'\)'
+    
+    tagged_columns = {}
+    lines = ddl.split('\n')
+    
+    for i, line in enumerate(lines):
+        if 'WITH TAG' in line and 'DATA_SENSITIVITY' in line:
+            match = re.search(tag_pattern, line)
+            if match and i > 0:
+                # Get column name from previous line
+                prev_line = lines[i-1]
+                col_match = re.match(r'^\s*(\w+)', prev_line)
+                if col_match:
+                    sensitivity = match.group(1)
+                    # Map the abbreviated sensitivity to full form
+                    sensitivity_map = {
+                        'CIF': 'Confidential Information',
+                        'NSPII': 'Non-sensitive PII',
+                        'SPII': 'Sensitive PII'
+                    }
+                    tagged_columns[col_match.group(1)] = sensitivity_map.get(sensitivity, sensitivity)
+                    
+    return tagged_columns
