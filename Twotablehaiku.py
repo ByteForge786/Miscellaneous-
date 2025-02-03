@@ -33,7 +33,6 @@ if 'initialized' not in st.session_state:
     st.session_state.current_object = None
     st.session_state.tagged_columns = None
     st.session_state.untagged_columns = None
-    st.session_state.editing_enabled = False
     st.session_state.analysis_complete = False
 
 @st.cache_resource
@@ -337,26 +336,30 @@ def extract_tagged_columns(ddl):
     tagged_columns = []
     for line in ddl.split('\n'):
         if 'NUCLEUS_METAHUB.GOVERNANCE_STATIC_REFERENCES.DATA_SENSITIVITY' in line:
-            column_name = re.search(r'"(\w+)"', line).group(1)
-            sensitivity_tag = re.search(r'NUCLEUS_METAHUB.GOVERNANCE_STATIC_REFERENCES.DATA_SENSITIVITY=\'(\w+)\'', line).group(1)
-            tagged_columns.append({
-                'Column Name': column_name,
-                'Data Sensitivity': sensitivity_tag
-            })
+            column_name = re.search(r'"(\w+)"', line)
+            if column_name:
+                column_name = column_name.group(1)
+                sensitivity_tag = re.search(r'NUCLEUS_METAHUB.GOVERNANCE_STATIC_REFERENCES.DATA_SENSITIVITY=\'(\w+)\'', line).group(1)
+                tagged_columns.append({
+                    'Column Name': column_name,
+                    'Data Sensitivity': sensitivity_tag
+                })
     return tagged_columns
 
 def extract_untagged_columns(ddl):
     untagged_columns = []
     for line in ddl.split('\n'):
         if 'CREATE OR REPLACE' in line and 'COLUMN' in line:
-            column_name = re.search(r'"(\w+)"', line).group(1)
-            data_type = re.search(r'\w+\s+(\w+)', line).group(1)
-            untagged_columns.append({
-                'Column Name': column_name,
-                'Data Type': data_type,
-                'Explanation': '',
-                'Data Sensitivity': ''
-            })
+            column_name = re.search(r'"(\w+)"', line)
+            if column_name:
+                column_name = column_name.group(1)
+                data_type = re.search(r'\w+\s+(\w+)', line).group(1)
+                untagged_columns.append({
+                    'Column Name': column_name,
+                    'Data Type': data_type,
+                    'Explanation': '',
+                    'Data Sensitivity': ''
+                })
     return untagged_columns
 
 def handle_table_updates(selected_schema, selected_object):
@@ -417,7 +420,7 @@ def main():
             st.session_state.analysis_complete = False
             st.session_state.tagged_columns = None
             st.session_state.untagged_columns = None
-
+    
     # Main content area
     if all([selected_schema, object_type, selected_object]):
         try:
@@ -433,18 +436,22 @@ def main():
                     for column, values in samples.items():
                         st.write(f"**{column}**: {', '.join(str(v) for v in values)}")
             
-            # Extract tagged and untagged columns
-            tagged_columns = extract_tagged_columns(ddl)
-            untagged_columns = extract_untagged_columns(ddl)
-            
-            # Display tagged columns table
-            display_tagged_columns_table(tagged_columns)
-            
-            # Display untagged columns table
-            display_untagged_columns_table(untagged_columns)
-            
-            # Handle user interactions and updates for both tables
-            handle_table_updates(selected_schema, selected_object)
+            # Check if the "Analyze" button has been clicked
+            if st.button("🔍 Analyze Structure"):
+                # Extract tagged and untagged columns
+                tagged_columns = extract_tagged_columns(ddl)
+                untagged_columns = extract_untagged_columns(ddl)
+                
+                # Display tagged columns table
+                display_tagged_columns_table(tagged_columns)
+                
+                # Display untagged columns table
+                display_untagged_columns_table(untagged_columns)
+                
+                # Handle user interactions and updates for both tables
+                handle_table_updates(selected_schema, selected_object)
+            else:
+                st.session_state.analysis_complete = False
 
         except Exception as e:
             st.error("Error analyzing DDL. Please try again.")
