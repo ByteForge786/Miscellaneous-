@@ -15,11 +15,12 @@ def parse_ddl_for_columns(ddl: str) -> List[str]:
             
     return columns
 
-def parse_ddl_tags(ddl: str) -> Dict[str, str]:
+def parse_ddl_tags(ddl: str) -> pd.DataFrame:
+    """Parse DDL to extract column names and their sensitivity tags"""
     # Regex to match TAG lines with DATA_SENSITIVITY
     tag_pattern = r'WITH\s+TAG\s+\([^)]*DATA_SENSITIVITY-\'(\w+)\'\)'
     
-    tagged_columns = {}
+    tagged_columns = []
     lines = ddl.split('\n')
     
     for i, line in enumerate(lines):
@@ -30,6 +31,7 @@ def parse_ddl_tags(ddl: str) -> Dict[str, str]:
                 prev_line = lines[i-1]
                 col_match = re.match(r'^\s*(\w+)', prev_line)
                 if col_match:
+                    column_name = col_match.group(1)
                     sensitivity = match.group(1)
                     # Map the abbreviated sensitivity to full form
                     sensitivity_map = {
@@ -37,6 +39,10 @@ def parse_ddl_tags(ddl: str) -> Dict[str, str]:
                         'NSPII': 'Non-sensitive PII',
                         'SPII': 'Sensitive PII'
                     }
-                    tagged_columns[col_match.group(1)] = sensitivity_map.get(sensitivity, sensitivity)
+                    tagged_columns.append({
+                        'Column Name': column_name,  
+                        'Explanation': '',
+                        'Data Sensitivity': sensitivity_map.get(sensitivity, sensitivity)
+                    })
                     
-    return tagged_columns
+    return pd.DataFrame(tagged_columns) if tagged_columns else None
