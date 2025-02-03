@@ -1,3 +1,31 @@
+Here’s a more concise version within 1333 characters:
+
+---
+
+**Key Achievements - Year-End Review**  
+
+- Developed an **end-to-end DQ Insights app** using **Streamlit & Python** for text-to-SQL and graph generation.  
+- Built a custom **LLM library**, quantized and optimized **LLaMA** for internal use, and created a **vector DB** from scratch.  
+- Engineered an **SQL classification model**, automating rule-based query categorization.  
+- Developed a groundbreaking **AI-powered data lineage system** using **XGBoost** and **Sentence Transformers**, automating lineage processes.  
+- Integrated **DQ Insights** across multiple backends: **LLaMA**, **MLflow**, **AWS SageMaker**, **Snowflake Cortex**, and **Chinou**, with a pluggable architecture.  
+- Designed a **Snowflake cost optimization chatbot** leveraging LLMs.  
+- Created a **sensitivity classification pipeline**, automating classification and description auto-fill.  
+- Worked on **industry & concept classification**, expanding automation.  
+- Delivered **10+ high-impact projects** end-to-end, ensuring scalability and production-readiness.  
+- Wrote **1,03,999+ lines of code**, delivering **scalable solutions** under tight deadlines.  
+- Successfully **single-handedly built** production-grade systems and deployed them live.
+
+---
+
+This keeps it brief while highlighting your core contributions. Does this work for you?
+
+
+
+
+
+
+
 ### **Key Achievements - Year-End Review**  
 
 This year has been marked by several groundbreaking contributions, spanning AI-driven automation, large language models, data quality insights, cost optimization, and machine learning pipelines. Below are my key achievements:  
