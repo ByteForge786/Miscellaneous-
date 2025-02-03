@@ -262,111 +262,127 @@ def apply_custom_css():
     """, unsafe_allow_html=True)
 
 def display_editable_table():
-    """Display the analysis results in a custom HTML table format"""
+    """Display the analysis results in a compact table format with enhanced styling"""
     if st.session_state.analysis_df is None:
         return
 
-    # Add download button
-    df_download = st.session_state.analysis_df.copy()
-    csv = df_download.to_csv(index=False)
-    st.download_button(
-        label="📥 Download Results as CSV",
-        data=csv,
-        file_name=f"ddl_analysis_{st.session_state.current_schema}_{st.session_state.current_object}_{datetime.now():%Y%m%d_%H%M}.csv",
-        mime="text/csv",
-        use_container_width=True,
-    )
-
-    # Create HTML table
-    table_html = """
-        <div class="table-container">
-            <table class="custom-table">
-                <thead>
-                    <tr>
-                        <th>Column Name</th>
-                        <th>Explanation</th>
-                        <th>Data Sensitivity</th>
-                    </tr>
-                </thead>
-                <tbody>
-    """
-
-    for idx, row in st.session_state.analysis_df.iterrows():
-        sensitivity_class = {
-            "Sensitive PII": "sensitive-pii",
-            "Non-sensitive PII": "non-sensitive-pii",
-            "Confidential Information": "confidential",
-            "Licensed Data": "licensed"
-        }.get(row['Data Sensitivity'], "")
-
-        table_html += f"""
-            <tr>
-                <td class="column-name">{row['Column Name']}</td>
-                <td class="editable" 
-                    onclick="this.querySelector('input').focus()"
-                    data-row="{idx}" 
-                    data-col="Explanation">
-                    <input type="text" 
-                           value="{row['Explanation']}"
-                           onchange="handleEdit(this)">
-                </td>
-                <td class="editable" 
-                    data-row="{idx}" 
-                    data-col="Data Sensitivity">
-                    <div class="sensitivity-badge {sensitivity_class}">
-                        <select onchange="handleEdit(this)">
-                            {"".join(f'<option value="{opt}" {"selected" if opt == row["Data Sensitivity"] else ""}>{opt}</option>' 
-                                   for opt in SENSITIVITY_OPTIONS)}
-                        </select>
-                    </div>
-                </td>
-            </tr>
-        """
-
-    table_html += """
-                </tbody>
-            </table>
-        </div>
-        <script>
-            function handleEdit(element) {
-                const row = element.closest('tr').rowIndex - 1;  // -1 for header
-                const col = element.closest('td').cellIndex;
-                const value = element.value;
-                
-                // Store edit in session
-                const key = `edit_${row}_${col}`;
-                sessionStorage.setItem(key, value);
-            }
-        </script>
-    """
-
-    st.markdown(table_html, unsafe_allow_html=True)
-
-    # Execute button with new styling
-    st.markdown(
-        '<button class="execute-button" onclick="submitEdits()">▶️ Execute</button>',
-        unsafe_allow_html=True
-    )
-
-    # Add JavaScript to handle Execute button click
+    # Add custom styling
     st.markdown("""
-        <script>
-            function submitEdits() {
-                const edits = {};
-                for (let i = 0; i < sessionStorage.length; i++) {
-                    const key = sessionStorage.key(i);
-                    if (key.startsWith('edit_')) {
-                        edits[key] = sessionStorage.getItem(key);
-                    }
-                }
-                // Clear session storage
-                sessionStorage.clear();
-                
-                // Update Streamlit state
-                window.Streamlit.setComponentValue(edits);
-            }
-        </script>
+        <style>
+        .dataframe {
+            width: 100% !important;
+            font-size: 14px !important;
+        }
+        .dataframe th {
+            background-color: #f8f9fa !important;
+            color: #344767 !important;
+            font-weight: 600 !important;
+            text-align: left !important;
+            padding: 12px 15px !important;
+            border-bottom: 2px solid #eee !important;
+        }
+        .dataframe td {
+            padding: 12px 15px !important;
+            border-bottom: 1px solid #eee !important;
+        }
+        .dataframe tr:hover {
+            background-color: #f8f9fa !important;
+        }
+        .sensitivity-pill {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 500;
+        }
+        .sensitive-pii { background: #ffebee; color: #d32f2f; }
+        .non-sensitive-pii { background: #e8f5e9; color: #2e7d32; }
+        .confidential { background: #fff3e0; color: #ef6c00; }
+        .licensed { background: #e3f2fd; color: #1976d2; }
+        
+        /* Custom editor styling */
+        .stDataEditor {
+            font-size: 14px !important;
+            border-radius: 8px !important;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1) !important;
+        }
+        .stDataEditor td div[data-testid="stDataEditorCell"] {
+            padding: 8px !important;
+        }
+        </style>
     """, unsafe_allow_html=True)
+
+    # Add download button with custom styling
+    col1, col2, col3 = st.columns([1,2,1])
+    with col2:
+        csv = st.session_state.analysis_df.to_csv(index=False)
+        st.download_button(
+            label="📥 Download Results as CSV",
+            data=csv,
+            file_name=f"ddl_analysis_{st.session_state.current_schema}_{st.session_state.current_object}_{datetime.now():%Y%m%d_%H%M}.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+    # Create an enhanced data editor
+    edited_df = st.data_editor(
+        st.session_state.analysis_df,
+        key=f"table_{st.session_state.current_schema}_{st.session_state.current_object}",
+        column_config={
+            "Column Name": st.column_config.TextColumn(
+                "Column Name",
+                width="medium",
+                disabled=True,
+            ),
+            "Explanation": st.column_config.TextColumn(
+                "Explanation",
+                width="large",
+            ),
+            "Data Sensitivity": st.column_config.SelectboxColumn(
+                "Data Sensitivity",
+                width="medium",
+                options=SENSITIVITY_OPTIONS,
+            )
+        },
+        hide_index=True,
+        use_container_width=True,
+        num_rows="fixed",
+    )
+
+    # Update the dataframe only if Execute is clicked
+    if st.button("▶️ Execute", key="execute_button"):
+        st.session_state.analysis_df = edited_df.copy()
+        save_feedback(
+            st.session_state.current_schema,
+            st.session_state.current_object,
+            st.session_state.analysis_df
+        )
+        st.success("✅ Feedback saved successfully!")
+        st.balloons()
+
+    # Display distribution chart with enhanced styling
+    st.markdown("### Data Sensitivity Distribution")
+    if edited_df is not None:
+        # Create a styled bar chart
+        sensitivity_counts = edited_df["Data Sensitivity"].value_counts()
+        
+        # Custom colors for each sensitivity type
+        colors = {
+            'Sensitive PII': '#ef5350',
+            'Non-sensitive PII': '#66bb6a',
+            'Confidential Information': '#ffa726',
+            'Licensed Data': '#42a5f5'
+        }
+        
+        # Create the chart
+        chart_data = pd.DataFrame({
+            'Sensitivity': sensitivity_counts.index,
+            'Count': sensitivity_counts.values
+        })
+        
+        st.bar_chart(
+            chart_data.set_index('Sensitivity'),
+            use_container_width=True,
+        )
 
 def main():
     st.set_page_config(page_title="DDL Analyzer", page_icon="🔍", layout="wide")
