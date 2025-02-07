@@ -1,3 +1,70 @@
+```python
+def get_connection(self, database=None, schema=None):
+    start_time = datetime.now()
+    wait_count = 0  # Track how many times we've waited for a free connection
+    
+    # Temporarily override database/schema if provided
+    original_database = self.database 
+    original_schema = self.schema
+    if database: self.database = database
+    if schema: self.schema = schema
+    
+    try:
+        while True:
+            # PRIORITY 1: Try to get a free connection
+            try:
+                connection = self._free_connections.get_nowait()
+                if self._is_connection_valid(connection):
+                    conn_id = str(id(connection))
+                    self._active_connections[conn_id] = connection
+                    logger.info(f"Retrieved free connection. Active: {len(self._active_connections)}, Free: {self._free_connections.qsize()}")
+                    return connection
+            except queue.Empty:
+                pass  # No free connections available
+
+            # PRIORITY 2: Create new connection if within current pool size
+            if len(self._active_connections) < self._current_pool_size:
+                try:
+                    connection = self._create_connection()
+                    conn_id = str(id(connection))
+                    self._active_connections[conn_id] = connection
+                    logger.info(f"Created new connection within pool limit. Active: {len(self._active_connections)}")
+                    return connection
+                except Exception as e:
+                    logger.error(f"Error creating new connection: {str(e)}")
+
+            # PRIORITY 3: If waiting too long, consider scaling up
+            wait_time = (datetime.now() - start_time).total_seconds()
+            if wait_time >= 5:  # Wait 5 seconds before considering scale up
+                if self._current_pool_size < self._max_pool_size:
+                    new_size = min(self._current_pool_size + 2, self._max_pool_size)  # Increment by 2
+                    logger.info(f"Scaling up pool from {self._current_pool_size} to {new_size}")
+                    self._current_pool_size = new_size
+                    try:
+                        connection = self._create_connection()
+                        conn_id = str(id(connection))
+                        self._active_connections[conn_id] = connection
+                        return connection
+                    except Exception as e:
+                        logger.error(f"Error creating connection during scale up: {str(e)}")
+
+            # Check timeout
+            if wait_time >= self.connection_timeout:
+                raise PoolTimeoutError(f"Could not get connection after {self.connection_timeout} seconds")
+
+            time.sleep(1)
+            wait_count += 1
+            
+    finally:
+        # Restore original values
+        self.database = original_database
+        self.schema = original_schema
+```
+
+
+
+
+
 import snowflake.connector
 import streamlit as st
 import logging
